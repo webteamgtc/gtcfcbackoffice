@@ -11,7 +11,7 @@ export default function Logo({ variant = 'main', width = 160, priority = false, 
   return (
     <Image
       src={LOGOS[variant]}
-      alt="GTC — Trusted | Regulated | Global"
+      alt="GTC Financial Consultancy"
       width={width}
       height={Math.round((width * 286) / 800)}
       priority={priority}

@@ -11,7 +11,7 @@ export default function LoginForm() {
   return (
     <form action={action} className="auth-form">
       <div className="field">
-        <label htmlFor="email" className="label">Email <span className="req">*</span></label>
+        <label htmlFor="email" className="label">Email <span className="required">*</span></label>
         <div className="control">
           <span className="icon"><MailIcon /></span>
           <input id="email" name="email" type="text" autoComplete="username" placeholder="you@example.com" defaultValue={state?.email} required />
@@ -19,7 +19,7 @@ export default function LoginForm() {
       </div>
 
       <div className="field">
-        <label htmlFor="password" className="label">Password <span className="req">*</span></label>
+        <label htmlFor="password" className="label">Password <span className="required">*</span></label>
         <div className="control">
           <span className="icon"><LockIcon /></span>
           <input id="password" name="password" type={showPassword ? 'text' : 'password'} autoComplete="current-password" placeholder="Enter your password" required />

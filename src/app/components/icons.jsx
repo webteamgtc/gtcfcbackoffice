@@ -42,3 +42,24 @@ export const EyeOffIcon = () => (
 export const ClockIcon = () => (
   <svg {...base}><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>
 );
+export const CheckIcon = () => (
+  <svg {...base}><path d="m5 12.5 4.5 4.5L19 7.5" /></svg>
+);
+export const XIcon = () => (
+  <svg {...base}><path d="M6 6l12 12M18 6 6 18" /></svg>
+);
+export const ArrowRightIcon = () => (
+  <svg {...base} className="flip-rtl"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
+);
+export const IdCardIcon = () => (
+  <svg {...base}><rect x="3" y="5" width="18" height="14" rx="2" /><circle cx="9" cy="11" r="2.2" /><path d="M6 16c.6-1.5 1.7-2.2 3-2.2s2.4.7 3 2.2M14.5 10h4M14.5 13.5h3" /></svg>
+);
+export const HomeIcon = () => (
+  <svg {...base}><path d="M4 10.5 12 4l8 6.5V20a1 1 0 0 1-1 1h-5v-6h-4v6H5a1 1 0 0 1-1-1z" /></svg>
+);
+export const HelpIcon = () => (
+  <svg {...base}><circle cx="12" cy="12" r="9" /><path d="M9.6 9.3a2.5 2.5 0 0 1 4.8.9c0 1.7-2.4 2.2-2.4 3.6M12 17h.01" /></svg>
+);
+export const AlertIcon = () => (
+  <svg {...base}><path d="M12 4 2.8 19.5h18.4z" /><path d="M12 10v4M12 17h.01" /></svg>
+);
