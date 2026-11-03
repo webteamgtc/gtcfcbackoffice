@@ -1,0 +1,33 @@
+# dependencies
+node_modules/
+
+# next.js
+.next/
+.next-profiles/
+out/
+next-env.d.ts
+
+# env
+.env
+.env*.local
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# misc
+.DS_Store
+*.pem
+
+# vercel
+.vercel
+
+# service-account keys
+/secrets/
+
+# local / generated (never commit)
+preview/
+.cursor/
+.turbo
+*.tsbuildinfo
