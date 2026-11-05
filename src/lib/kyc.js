@@ -1,7 +1,7 @@
 // Client-side safe helpers that turn the profile + uploaded documents into the verification journey shown
 // on the dashboard. Pure functions: no database access, so client components can use them too.
 
-export const DOC_LABELS = { PASSPORT: 'Passport', ID_CARD: 'National ID card', DRIVERS: "Driver's license", PROOF_OF_ADDRESS: 'Proof of address' };
+export const DOC_LABELS = { PASSPORT: 'Passport', ID_CARD: 'National ID card', DRIVERS: "Driver's license", RESIDENCE_PERMIT: 'Residence permit', PROOF_OF_ADDRESS: 'Proof of address' };
 
 /** What the client has to provide. `types` are the Sumsub idDocType values accepted for it. */
 export const REQUIREMENTS = [
@@ -10,7 +10,7 @@ export const REQUIREMENTS = [
     title: 'Identity document',
     short: 'ID document',
     noun: 'ID document',
-    types: ['PASSPORT', 'ID_CARD', 'DRIVERS'],
+    types: ['PASSPORT', 'ID_CARD', 'DRIVERS', 'RESIDENCE_PERMIT'],
     hint: 'Passport, national ID card or driver’s license. All four corners visible, text readable, not expired.'
   },
   {

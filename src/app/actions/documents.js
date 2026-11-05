@@ -10,7 +10,7 @@ import { DOCUMENTS_BUCKET } from '@/lib/user';
 
 const MAX_BYTES = 10 * 1024 * 1024;
 const ALLOWED_TYPES = ['application/pdf', 'image/jpeg', 'image/png'];
-const DOC_TYPES = ['PASSPORT', 'ID_CARD', 'DRIVERS', 'PROOF_OF_ADDRESS']; // Sumsub idDocType values
+const DOC_TYPES = ['PASSPORT', 'ID_CARD', 'DRIVERS', 'RESIDENCE_PERMIT', 'PROOF_OF_ADDRESS']; // Sumsub idDocType values
 
 export async function uploadDocument(state, formData) {
   const session = await getSession();
