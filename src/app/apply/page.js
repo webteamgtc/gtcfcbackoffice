@@ -1,19 +1,21 @@
 import Logo from '@/app/components/Logo';
 import LiveApplicationForm from '@/app/components/LiveApplicationForm';
-import { LockIcon, ShieldIcon, UploadIcon, UserIcon } from '@/app/components/icons';
+import { FileIcon, HomeIcon, IdCardIcon, LockIcon, ShieldIcon, UserIcon } from '@/app/components/icons';
 import { BRAND } from '@/lib/brand';
 
 export const metadata = { title: `Apply | ${BRAND.name}` };
 
 /**
- * Client application: the two-step form beside a navy panel explaining the process.
+ * Client application: the five-step form beside a navy panel explaining the process.
  * Served at "/" while the portal is hidden (src/lib/features.js, src/proxy.js).
  * Wording stays within the CAT 5 licence: consultancy client application, no trading terms.
  */
 const HOW = [
-  { Icon: UserIcon, title: 'Your details', text: 'Your name, contact details and a verified email.' },
-  { Icon: UploadIcon, title: 'Your documents', text: 'An identity document and a proof of address.' },
-  { Icon: ShieldIcon, title: 'We review them', text: 'We email you a confirmation and contact you about next steps.' }
+  { Icon: UserIcon, title: 'Personal information', text: 'Your name, country and a verified email.' },
+  { Icon: IdCardIcon, title: 'Identity information', text: 'Your identity document, front and back.' },
+  { Icon: HomeIcon, title: 'Proof of address', text: 'A recent utility bill or bank statement.' },
+  { Icon: FileIcon, title: 'Questionnaire and agreement', text: 'A few background questions, then sign electronically.' },
+  { Icon: ShieldIcon, title: 'We review your application', text: 'We email you a confirmation and contact you about next steps.' }
 ];
 
 export default function ApplyPage() {
@@ -24,7 +26,7 @@ export default function ApplyPage() {
           <Logo variant="footer" width={150} priority className="apply-logo" />
           <p className="auth-kicker">Client application</p>
           <h1>
-            Become a client in <span>two simple steps</span>.
+            Become a client in <span>a few simple steps</span>.
           </h1>
           <ol className="auth-how">
             {HOW.map(({ Icon, title, text }, i) => (

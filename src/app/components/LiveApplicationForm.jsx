@@ -18,7 +18,8 @@ import { AGREEMENT_TEXT, EMPTY_APPLICATION, FILE_ACCEPT, ID_TYPES, OPTIONS, PEP_
 import { COUNTRIES, DEFAULT_COUNTRY, countryByCode } from '@/lib/countries';
 import { DOC_LABELS, formatSize } from '@/lib/kyc';
 import { BRAND } from '@/lib/brand';
-import { AlertIcon, ArrowRightIcon, CheckIcon, ClockIcon, EyeIcon, EyeOffIcon, FileIcon, GlobeIcon, HomeIcon, IdCardIcon, LockIcon, MailIcon, PhoneIcon, ShieldIcon, TagIcon, UploadIcon, UserIcon, XIcon } from './icons';
+import DatePicker from './DatePicker';
+import { AlertIcon, ArrowRightIcon, CheckIcon, ClockIcon, EyeIcon, EyeOffIcon, FileIcon, GlobeIcon, HomeIcon, IdCardIcon, LockIcon, MailIcon, PhoneIcon, ShieldIcon, UploadIcon, UserIcon, XIcon } from './icons';
 
 const RESEND_SECONDS = 60;
 const COUNTRY_OPTIONS = COUNTRIES.map((c) => ({ value: c.code, label: c.name }));
@@ -198,6 +199,17 @@ export default function LiveApplicationForm() {
         icon,
         <input id={`ap-${k}`} value={values[k]} onChange={set(k)} onBlur={blur(k)} aria-invalid={Boolean(err(k))} {...props} />,
         props.type === 'date' ? ' date' : ''
+      )}
+    </Field>
+  );
+
+  const dateField = (k, label, { optional, hint, initialView, max = today() } = {}) => (
+    <Field id={`ap-${k}`} label={label} required={!optional} optional={optional} error={err(k)} hint={hint}>
+      {control(
+        k,
+        null,
+        <DatePicker id={`ap-${k}`} value={values[k]} onChange={(v) => setValue(k, v)} onBlur={blur(k)} max={max} initialView={initialView} invalid={Boolean(err(k))} />,
+        ' date'
       )}
     </Field>
   );
@@ -444,7 +456,7 @@ export default function LiveApplicationForm() {
           <div className="apply-grid">
             {textField('lastName', 'Surname', { icon: <UserIcon />, placeholder: 'Surname', autoComplete: 'family-name' })}
             {textField('firstName', 'Given name', { icon: <UserIcon />, placeholder: 'Given name', autoComplete: 'given-name' })}
-            {textField('dateOfBirth', 'Date of birth', { type: 'date', max: today(), autoComplete: 'bday' })}
+            {dateField('dateOfBirth', 'Date of birth', { initialView: `${new Date().getFullYear() - 30}-01-01` })}
             {selectField('country', 'Country of residence', COUNTRY_OPTIONS, { icon: <GlobeIcon />, placeholder: 'Choose a country' })}
 
             <p className="apply-section apply-wide">Account details</p>
@@ -523,14 +535,7 @@ export default function LiveApplicationForm() {
                 />
               </div>
             </Field>
-            <Field id="ap-partnerCode" label="Partner code" optional>
-              {control(
-                'partnerCode',
-                <TagIcon />,
-                <input id="ap-partnerCode" value={values.partnerCode} onChange={set('partnerCode')} readOnly={partnerLocked} placeholder="If you were referred" />,
-                partnerLocked ? ' is-locked' : ''
-              )}
-            </Field>
+            {/* Partner code field is hidden; a code in the URL (?code, ?ref, …) is still captured into values.partnerCode */}
           </div>
         )}
 
@@ -601,7 +606,7 @@ export default function LiveApplicationForm() {
                 aria-invalid={Boolean(err('address'))}
               />
             </Field>
-            {textField('proofDate', 'Proof date', { type: 'date', optional: true, max: today(), hint: 'The date printed on the document.' })}
+            {dateField('proofDate', 'Proof date', { optional: true, hint: 'The date printed on the document.' })}
           </div>
         )}
 

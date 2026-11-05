@@ -63,3 +63,12 @@ export const HelpIcon = () => (
 export const AlertIcon = () => (
   <svg {...base}><path d="M12 4 2.8 19.5h18.4z" /><path d="M12 10v4M12 17h.01" /></svg>
 );
+export const CalendarIcon = () => (
+  <svg {...base}><rect x="3.5" y="5" width="17" height="15.5" rx="3" /><path d="M3.5 10h17M8 3v4M16 3v4" /></svg>
+);
+export const ChevronLeftIcon = () => (
+  <svg {...base}><path d="m14.5 6-6 6 6 6" /></svg>
+);
+export const ChevronRightIcon = () => (
+  <svg {...base}><path d="m9.5 6 6 6-6 6" /></svg>
+);
