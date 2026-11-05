@@ -4,22 +4,24 @@
  * Client application: the personal KYC journey from "Current KYC Journey in MAX CRM" (public/…-form.docx), five steps.
  *   1. Personal Information: given name, surname, date of birth, country of residence, plus the account details
  *      (email + emailed code via POST /api/otp-smtp, password, phone, partner code). Checked on the server before moving on.
- *   2. Identity Information: nationality, document type, name and number as on the document, front + back photos.
- *   3. Proof of Address: utility bill / bank statement, country, postal code, address, proof date.
+ *   2. Identity Information: nationality, document type, name and number as on the document.
+ *   3. Proof of Address: country, postal code, address, proof date.
  *   4. Questionnaire: education, employment, income, experience, US citizenship, TIN, PEP declaration.
  *   5. Client Agreement: the two agreements to sign. Submit saves everything (src/app/actions/application.js),
- *      e-mails a confirmation and shows the success panel.
+ *      e-mails a confirmation and shows the success panel with the Sumsub verification (SumsubVerification.jsx), which
+ *      collects the document photos, the proof of address file and a selfie — nothing is uploaded in this form.
  * Fields, options and rules live in src/lib/application.js. Nothing is saved until the last step.
  * Partner code is read from the URL (?code, ?ref, ?partner_id, ?partner_code, ?ib); ?code / ?ref lock it.
  */
 import { Fragment, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { checkApplication, emailAvailable, submitApplication } from '@/app/actions/application';
-import { AGREEMENT_TEXT, EMPTY_APPLICATION, FILE_ACCEPT, ID_TYPES, OPTIONS, PEP_TEXT, STEPS, STEP_FIELDS, emailError, firstStepWithError, validateAll, validateStep } from '@/lib/application';
+import { AGREEMENT_TEXT, EMPTY_APPLICATION, ID_TYPES, OPTIONS, PEP_TEXT, STEPS, STEP_FIELDS, emailError, firstStepWithError, validateAll, validateStep } from '@/lib/application';
 import { COUNTRIES, DEFAULT_COUNTRY, countryByCode } from '@/lib/countries';
-import { DOC_LABELS, formatSize } from '@/lib/kyc';
+import { DOC_LABELS } from '@/lib/kyc';
 import { BRAND } from '@/lib/brand';
+import SumsubVerification from './SumsubVerification';
 import DatePicker from './DatePicker';
-import { AlertIcon, ArrowRightIcon, CheckIcon, ClockIcon, EyeIcon, EyeOffIcon, FileIcon, GlobeIcon, HomeIcon, IdCardIcon, LockIcon, MailIcon, PhoneIcon, ShieldIcon, UploadIcon, UserIcon, XIcon } from './icons';
+import { AlertIcon, ArrowRightIcon, CheckIcon, ClockIcon, EyeIcon, EyeOffIcon, FileIcon, GlobeIcon, IdCardIcon, LockIcon, MailIcon, PhoneIcon, ShieldIcon, UserIcon } from './icons';
 
 const RESEND_SECONDS = 60;
 const COUNTRY_OPTIONS = COUNTRIES.map((c) => ({ value: c.code, label: c.name }));
@@ -28,8 +30,8 @@ const today = () => new Date().toISOString().slice(0, 10);
 
 const HEADS = [
   { title: 'Personal information', text: 'Use your name exactly as it appears on your identity document.' },
-  { title: 'Identity information', text: 'Clear colour photos, all four corners visible and the text readable.' },
-  { title: 'Proof of address', text: 'A utility bill or bank statement showing your name and residential address.' },
+  { title: 'Identity information', text: 'Enter the details exactly as they appear on your identity document. You’ll photograph it in the verification step.' },
+  { title: 'Proof of address', text: 'Your residential address as shown on a recent utility bill or bank statement. You’ll upload it in the verification step.' },
   { title: 'Questionnaire', text: 'A few questions about your background, as required by our compliance obligations.' },
   { title: 'Client agreement', text: 'Please read the documents below and confirm to sign them electronically.' }
 ];
@@ -59,82 +61,9 @@ function Field({ id, label, required, optional, error, hint, wide, children }) {
   );
 }
 
-function FilePick({ id, title, text, Icon, accept, hint, file, error, onPick }) {
-  const inputRef = useRef(null);
-  const [dragging, setDragging] = useState(false);
-  return (
-    <div className={['doc-pick', file && !error && 'is-done', error && 'is-bad'].filter(Boolean).join(' ')}>
-      <div className="doc-pick-head">
-        <span className="doc-pick-icon">{file && !error ? <CheckIcon /> : <Icon />}</span>
-        <span>
-          <strong>
-            {title} <span className="required">*</span>
-          </strong>
-          {text && <small>{text}</small>}
-        </span>
-      </div>
-      <label
-        htmlFor={id}
-        className={['drop', dragging && 'is-drag', file && 'has-file'].filter(Boolean).join(' ')}
-        onDragOver={(e) => {
-          e.preventDefault();
-          setDragging(true);
-        }}
-        onDragLeave={() => setDragging(false)}
-        onDrop={(e) => {
-          e.preventDefault();
-          setDragging(false);
-          if (e.dataTransfer.files?.[0]) onPick(e.dataTransfer.files[0]);
-        }}
-      >
-        <input ref={inputRef} id={id} type="file" accept={accept} onChange={(e) => onPick(e.target.files?.[0] ?? null)} />
-        {file ? (
-          <span className="drop-file">
-            <span className="drop-file-icon">
-              <FileIcon />
-            </span>
-            <span className="drop-file-text">
-              <strong>{file.name}</strong>
-              <small>{formatSize(file.size)}</small>
-            </span>
-          </span>
-        ) : (
-          <>
-            <span className="drop-icon">
-              <UploadIcon />
-            </span>
-            <span className="drop-title">
-              <strong>Drag your file here</strong> or <u>browse</u>
-            </span>
-            <span className="hint">{hint}</span>
-          </>
-        )}
-      </label>
-      {file && (
-        <button
-          type="button"
-          className="link-btn"
-          onClick={() => {
-            if (inputRef.current) inputRef.current.value = '';
-            onPick(null);
-          }}
-        >
-          <XIcon /> Choose a different file
-        </button>
-      )}
-      {error && (
-        <p className="field-error" role="alert">
-          {error}
-        </p>
-      )}
-    </div>
-  );
-}
-
 export default function LiveApplicationForm() {
   const [step, setStep] = useState(0);
   const [values, setValues] = useState({ ...EMPTY_APPLICATION, country: DEFAULT_COUNTRY });
-  const [files, setFiles] = useState({ idFront: null, idBack: null, poa: null });
   const [touched, setTouched] = useState({});
   const [serverErrors, setServerErrors] = useState({});
   const [alert, setAlert] = useState(null);
@@ -161,7 +90,7 @@ export default function LiveApplicationForm() {
     return () => clearTimeout(t);
   }, [cooldown]);
 
-  const clientErrors = useMemo(() => validateAll(values, files), [values, files]);
+  const clientErrors = useMemo(() => validateAll(values), [values]);
   const err = (k) => serverErrors[k] ?? (touched[k] ? clientErrors[k] : undefined);
   const country = countryByCode(values.country);
 
@@ -172,11 +101,6 @@ export default function LiveApplicationForm() {
   };
   const set = (k) => (e) => setValue(k, e.target.type === 'checkbox' ? e.target.checked : e.target.value);
   const blur = (k) => () => setTouched((t) => ({ ...t, [k]: true }));
-  const pickFile = (k) => (f) => {
-    setFiles((cur) => ({ ...cur, [k]: f }));
-    setTouched((t) => ({ ...t, [k]: true }));
-    clearServer(k);
-  };
   const go = (i) => {
     setAlert(null);
     setStep(i);
@@ -327,7 +251,7 @@ export default function LiveApplicationForm() {
     setAlert(null);
     const key = STEPS[step].key;
     setTouched((t) => ({ ...t, ...Object.fromEntries(STEP_FIELDS[key].map((k) => [k, true])) }));
-    if (Object.keys(validateStep(key, values, files)).length) return;
+    if (Object.keys(validateStep(key, values)).length) return;
 
     if (step === 0) {
       startTransition(async () => {
@@ -346,14 +270,10 @@ export default function LiveApplicationForm() {
     }
     if (step < STEPS.length - 1) return go(step + 1);
 
-    const fd = new FormData();
-    for (const [k, v] of Object.entries(values)) fd.append(k, String(v));
-    for (const [k, f] of Object.entries(files)) if (f && !(k === 'idBack' && values.idType === 'PASSPORT')) fd.append(k, f);
-
     startTransition(async () => {
       let res;
       try {
-        res = await submitApplication(fd);
+        res = await submitApplication(values);
       } catch {
         res = { error: 'We could not send your application. Please check your connection and try again.' };
       }
@@ -382,24 +302,13 @@ export default function LiveApplicationForm() {
           </span>
           <h2>Application submitted</h2>
           <p>
-            Thank you, <span className="cap">{values.firstName}</span>. We’ve received your information and documents, and sent a confirmation to{' '}
-            <strong>{done.email}</strong>.
+            Thank you, <span className="cap">{values.firstName}</span>. We’ve received your information and sent a confirmation to <strong>{done.email}</strong>.
           </p>
           <p className="apply-ref">
             Reference <strong>{done.reference}</strong>
           </p>
-          <ol className="apply-next">
-            <li>
-              <CheckIcon /> Information and documents received
-            </li>
-            <li>
-              <ShieldIcon /> Our compliance team reviews your application
-            </li>
-            <li>
-              <MailIcon /> We email you about the next steps
-            </li>
-          </ol>
         </div>
+        <SumsubVerification />
       </div>
     );
   }
@@ -407,7 +316,6 @@ export default function LiveApplicationForm() {
   /* ---------------------------------------------------------------- steps */
 
   const last = step === STEPS.length - 1;
-  const idNeedsBack = values.idType !== 'PASSPORT';
 
   return (
     <div className="apply-card" ref={topRef}>
@@ -544,30 +452,6 @@ export default function LiveApplicationForm() {
             {selectField('nationality', 'Nationality', COUNTRY_OPTIONS, { icon: <GlobeIcon />, placeholder: 'Choose a country' })}
             <div className="apply-spacer" aria-hidden />
             {choiceField('idType', 'Identification document', ID_TYPES.map((t) => ({ value: t, label: DOC_LABELS[t] })))}
-            <div className={`apply-wide doc-pair${idNeedsBack ? '' : ' single'}`}>
-              <FilePick
-                id="ap-idFront"
-                title="Front side photo of document"
-                Icon={IdCardIcon}
-                accept={FILE_ACCEPT.idFront}
-                hint="JPG or PNG · up to 10 MB"
-                file={files.idFront}
-                error={err('idFront')}
-                onPick={pickFile('idFront')}
-              />
-              {idNeedsBack && (
-                <FilePick
-                  id="ap-idBack"
-                  title="Back side photo of document"
-                  Icon={IdCardIcon}
-                  accept={FILE_ACCEPT.idBack}
-                  hint="JPG or PNG · up to 10 MB"
-                  file={files.idBack}
-                  error={err('idBack')}
-                  onPick={pickFile('idBack')}
-                />
-              )}
-            </div>
             <p className="apply-section apply-wide">As shown on the document</p>
             {textField('idLastName', 'Surname', { icon: <UserIcon />, placeholder: 'Surname on the document' })}
             {textField('idFirstName', 'Given name', { icon: <UserIcon />, placeholder: 'Given name on the document' })}
@@ -577,19 +461,6 @@ export default function LiveApplicationForm() {
 
         {step === 2 && (
           <div className="apply-grid">
-            <div className="apply-wide">
-              <FilePick
-                id="ap-poa"
-                title="Utilities & bank statements"
-                text="Dated within the last 3 months, showing your full name and residential address."
-                Icon={HomeIcon}
-                accept={FILE_ACCEPT.poa}
-                hint="PDF, JPG or PNG · up to 10 MB"
-                file={files.poa}
-                error={err('poa')}
-                onPick={pickFile('poa')}
-              />
-            </div>
             {selectField('poaCountry', 'Country (region) of residence', COUNTRY_OPTIONS, { icon: <GlobeIcon />, placeholder: 'Choose a country' })}
             {textField('postalCode', 'Postal code', { placeholder: 'Postal code', autoComplete: 'postal-code' })}
             <Field id="ap-address" label="Detailed address" required error={err('address')} wide>

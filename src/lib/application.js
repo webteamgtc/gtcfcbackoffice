@@ -1,5 +1,7 @@
 // Client application (src/app/apply): the personal KYC journey from "Current KYC Journey in MAX CRM" (sections 2.1–2.5),
 // with the account details (email + code, password, phone) added to step 1 since clients register here.
+// The document photos and the proof of address file are not uploaded here: Sumsub collects them (and the selfie) after
+// submission (src/app/components/SumsubVerification.jsx).
 // Field lists, options and rules shared by the form and the server actions. Pure, so the client form can use it too.
 import { countryByCode } from '@/lib/countries';
 
@@ -115,11 +117,11 @@ export const EMPTY_APPLICATION = {
   agreement2: false
 };
 
-// which step each field (and file) belongs to — the form marks a step's fields as touched on "Next"
+// which step each field belongs to — the form marks a step's fields as touched on "Next"
 export const STEP_FIELDS = {
   personal: ['firstName', 'lastName', 'dateOfBirth', 'country', 'email', 'code', 'password', 'phone', 'partnerCode'],
-  identity: ['nationality', 'idType', 'idFirstName', 'idLastName', 'idNumber', 'idFront', 'idBack'],
-  address: ['poa', 'poaCountry', 'postalCode', 'address', 'proofDate'],
+  identity: ['nationality', 'idType', 'idFirstName', 'idLastName', 'idNumber'],
+  address: ['poaCountry', 'postalCode', 'address', 'proofDate'],
   questionnaire: [
     'education', 'employment', 'industry', 'industryOther', 'occupation', 'occupationOther', 'employer', 'previousEmployment',
     'experienceYears', 'income', 'sourceOfFunds', 'investmentExperience', 'marketExperience', 'usCitizen', 'tin', 'pep'
@@ -163,17 +165,6 @@ function ageOn(dob) {
   return age;
 }
 
-const ACCEPT_ID = ['image/jpeg', 'image/png'];
-const ACCEPT_POA = ['application/pdf', 'image/jpeg', 'image/png'];
-export const MAX_FILE_BYTES = 10 * 1024 * 1024;
-export const FILE_ACCEPT = { idFront: '.jpg,.jpeg,.png', idBack: '.jpg,.jpeg,.png', poa: '.pdf,.jpg,.jpeg,.png' };
-
-export function fileError(file, types = ACCEPT_POA) {
-  if (!file || typeof file === 'string' || file.size === 0) return 'Please choose a file.';
-  if (!types.includes(file.type)) return types.includes('application/pdf') ? 'Only PDF, JPG or PNG files are allowed.' : 'Only JPG or PNG photos are allowed.';
-  if (file.size > MAX_FILE_BYTES) return 'File must be 10 MB or smaller.';
-}
-
 const need = (e, v, k, msg) => {
   if (!v[k]) e[k] = msg;
 };
@@ -181,8 +172,8 @@ const oneOf = (e, v, k, list, msg) => {
   if (!list.includes(v[k])) e[k] = msg;
 };
 
-/** Field → message for one step's invalid fields. `files` = { idFront, idBack, poa } (File or null). */
-export function validateStep(key, v, files = {}) {
+/** Field → message for one step's invalid fields. (The documents themselves are collected by Sumsub after submission.) */
+export function validateStep(key, v) {
   const e = {};
   if (key === 'personal') {
     if (!v.firstName.trim()) e.firstName = 'Please enter your given name.';
@@ -214,17 +205,8 @@ export function validateStep(key, v, files = {}) {
     else if (!LETTERS_RE.test(v.idFirstName.trim())) e.idFirstName = 'Use letters only.';
     if (!v.idNumber.trim()) e.idNumber = 'Please enter the document number.';
     else if (!/^[A-Za-z0-9 -]{3,40}$/.test(v.idNumber.trim())) e.idNumber = 'Use letters, numbers and dashes only.';
-    const front = fileError(files.idFront, ACCEPT_ID);
-    if (front) e.idFront = front;
-    // a passport has no back side; for the other documents the back is required
-    if (v.idType !== 'PASSPORT') {
-      const back = fileError(files.idBack, ACCEPT_ID);
-      if (back) e.idBack = back;
-    }
   }
   if (key === 'address') {
-    const poa = fileError(files.poa, ACCEPT_POA);
-    if (poa) e.poa = poa;
     if (!countryByCode(v.poaCountry)) e.poaCountry = 'Please choose your country of residence.';
     if (!v.postalCode.trim()) e.postalCode = 'Please enter your postal code.';
     else if (!/^[A-Za-z0-9 -]{2,20}$/.test(v.postalCode.trim())) e.postalCode = 'Please enter a valid postal code.';
@@ -253,8 +235,8 @@ export function validateStep(key, v, files = {}) {
   return e;
 }
 
-export function validateAll(v, files) {
-  return Object.assign({}, ...STEPS.map((s) => validateStep(s.key, v, files)));
+export function validateAll(v) {
+  return Object.assign({}, ...STEPS.map((s) => validateStep(s.key, v)));
 }
 
 /** The phone number in international form, e.g. "+971 501234567". */

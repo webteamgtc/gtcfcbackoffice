@@ -25,7 +25,9 @@ export async function getCurrentUser() {
     emailVerified: Boolean(pick(doc, 'emailVerified', 'email_verified')),
     country: pick(doc, 'country', 'countryOfResidence', 'country_of_residence') ?? '',
     phone: pick(doc, 'phone', 'phoneNumber', 'phone_number', 'mobile') ?? '',
-    partnerCode: pick(doc, 'partnerCode', 'partner_code') ?? ''
+    partnerCode: pick(doc, 'partnerCode', 'partner_code') ?? '',
+    // Sumsub outcome (src/lib/verification.js); null before verification has started
+    verificationStatus: doc.kyc?.verificationStatus ?? null
   };
 }
 

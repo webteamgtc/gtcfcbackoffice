@@ -1,13 +1,10 @@
 'use server';
 
-import { Readable } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
 import { headers } from 'next/headers';
 import bcrypt from 'bcryptjs';
-import { GridFSBucket } from 'mongodb';
 import { getDb } from '@/lib/mongodb';
-import { DOCUMENTS_BUCKET } from '@/lib/user';
 import { verifyOtp } from '@/lib/otpStore';
+import { createSession } from '@/lib/session';
 import { applicationReceivedEmail, sendMail } from '@/lib/mailer';
 import { emailError, firstStepWithError, fullPhone, readApplication, validateAll, validateStep } from '@/lib/application';
 
@@ -15,9 +12,9 @@ import { emailError, firstStepWithError, fullPhone, readApplication, validateAll
  * Client application, the five-step KYC journey (src/app/components/LiveApplicationForm.jsx, fields in src/lib/application.js):
  *   emailAvailable    → before the form asks POST /api/otp-smtp for a code: is the e-mail still free?
  *   checkApplication  → step 1 (personal information): validates it and the e-mailed code (src/lib/otpStore.js); nothing saved
- *   submitApplication → last step: every step again + the files (ID front/back, proof of address); uses up the code, saves the
- *                       client to `user_record` (bcrypt password, answers under `kyc`) and the files to GridFS (same format
- *                       as actions/documents.js, so the dashboard shows them), then e-mails a confirmation.
+ *   submitApplication → last step: every step again; uses up the code, saves the client to `user_record` (bcrypt password,
+ *                       answers under `kyc`), signs the client in (session cookie, for the Sumsub verification that follows,
+ *                       which collects the documents) and e-mails a confirmation.
  *                       → { ok, email, reference } or { step (0-based), errors } / { error }
  */
 async function emailTaken(db, email) {
@@ -59,21 +56,13 @@ export async function checkApplication(input) {
   }
 }
 
-const file = (formData, k) => {
-  const f = formData.get(k);
-  return f && typeof f !== 'string' && f.size > 0 ? f : null;
-};
-
-export async function submitApplication(formData) {
-  const v = readApplication(formData);
-  const files = { idFront: file(formData, 'idFront'), idBack: v.idType === 'PASSPORT' ? null : file(formData, 'idBack'), poa: file(formData, 'poa') };
-  const errors = validateAll(v, files);
+export async function submitApplication(input) {
+  const v = readApplication(input);
+  const errors = validateAll(v);
   if (Object.keys(errors).length) return { step: firstStepWithError(errors), errors };
 
   let db;
   let insertedId;
-  let userId;
-  const uploaded = [];
   const now = new Date();
   try {
     db = await getDb();
@@ -123,30 +112,14 @@ export async function submitApplication(formData) {
       userAgent: (h.get('user-agent') ?? '').slice(0, 300),
       createdAt: now
     }));
-    userId = String(insertedId);
-
-    const bucket = new GridFSBucket(db, { bucketName: DOCUMENTS_BUCKET });
-    for (const [f, docType, side] of [
-      [files.idFront, v.idType, 'FRONT'],
-      [files.idBack, v.idType, 'BACK'],
-      [files.poa, 'PROOF_OF_ADDRESS', null]
-    ]) {
-      if (!f) continue;
-      // sumsubStatus moves past 'pending' once the Sumsub integration sends the file
-      const upload = bucket.openUploadStream(f.name, { metadata: { userId, docType, ...(side ? { side } : {}), contentType: f.type, sumsubStatus: 'pending' } });
-      uploaded.push(upload.id);
-      await pipeline(Readable.fromWeb(f.stream()), upload);
-    }
   } catch (err) {
     console.error('[application] submit:', err);
-    // undo a half-saved application so the client can simply try again
-    if (insertedId) {
-      const bucket = new GridFSBucket(db, { bucketName: DOCUMENTS_BUCKET });
-      await Promise.all(uploaded.map((id) => bucket.delete(id).catch(() => {})));
-      await db.collection('user_record').deleteOne({ _id: insertedId }).catch(() => {});
-    }
     return { error: 'We could not save your application. Please try again.' };
   }
+  const userId = String(insertedId);
+
+  // signed in from here on: the identity verification that follows (actions/verification.js) is tied to this client
+  await createSession({ id: userId, name: `${v.firstName} ${v.lastName}` });
 
   // confirmation e-mail; a failure doesn't undo the application (confirmationEmailSent: false on the record)
   const reference = userId.slice(-8).toUpperCase();

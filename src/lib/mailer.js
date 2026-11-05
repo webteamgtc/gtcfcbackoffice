@@ -30,12 +30,13 @@ function layout(title, bodyHtml) {
 export function applicationReceivedEmail({ name, reference }) {
   return {
     subject: `We've received your application | ${BRAND.name}`,
-    text: `Hello ${name},\n\nThank you. We've received your application and your documents (reference ${reference}).\n\nOur team will review them and contact you about the next steps.\n\n${BRAND.name}`,
+    text: `Hello ${name},\n\nThank you. We've received your application (reference ${reference}).\n\nIf you haven't yet, please complete the identity verification on our website: photograph your identity document and proof of address, and take a quick selfie. Our team will then review your application and contact you about the next steps.\n\n${BRAND.name}`,
     html: layout(
       'Application received',
-      `<p>Hello ${esc(name)},</p><p>Thank you. We've received your application and your documents.</p>
+      `<p>Hello ${esc(name)},</p><p>Thank you. We've received your application.</p>
 <p style="margin:18px 0;padding:12px 16px;background:#f6eee4;border-radius:10px">Reference: <strong>${esc(reference)}</strong></p>
-<p>Our team will review them and contact you about the next steps.</p>`
+<p>If you haven't yet, please complete the identity verification on our website: photograph your identity document and proof of address, and take a quick selfie.</p>
+<p>Our team will then review your application and contact you about the next steps.</p>`
     )
   };
 }
