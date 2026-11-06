@@ -1,5 +1,6 @@
 // Client application (src/app/apply): the KYC journey from "Current KYC Journey in MAX CRM", with exactly the fields of
-// the document: sections 2.1–2.5 (personal accounts only). The ID photos (front, back) and the proof of address file are uploaded in
+// the document: sections 2.1–2.5 for every client, plus 2.6–2.8 (company, business licence, corporate agreement) when the
+// client picks the Corporate account type in step 1. 2.2–2.4 are hidden for now (HIDDEN_STEPS): Sumsub collects them. The ID photos (front, back) and the proof of address file are uploaded in
 // steps 2 and 3 (actions/application.js → uploadApplicationFile, stored in GridFS); the form keeps their file ids.
 // Sumsub still runs after submission (src/app/components/SumsubVerification.jsx).
 // Field lists, options and rules shared by the form and the server actions. Pure, so the client form can use it too.
@@ -9,13 +10,27 @@ export const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const LETTERS_RE = /^[\p{L}\p{M}\s'’.-]+$/u;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
+// corporate steps come last, so an individual's steps are the first five of the list
 export const STEPS = [
   { key: 'personal', title: 'Personal Information' },
   { key: 'identity', title: 'Identity Information' },
   { key: 'address', title: 'Proof of Address' },
   { key: 'questionnaire', title: 'Questionnaire' },
-  { key: 'agreement', title: 'Client Agreement' }
+  { key: 'agreement', title: 'Client Agreement' },
+  { key: 'company', title: 'Company Information', corporate: true },
+  { key: 'license', title: 'Business License', corporate: true },
+  { key: 'corporateAgreement', title: 'Client Agreement (Corporate)', corporate: true }
 ];
+/**
+ * Steps not shown because Sumsub collects the same thing in its verification after submit (ID document, proof of
+ * address, questionnaire). Remove a key to show that step in the form again; its fields and checks are all still here.
+ */
+export const HIDDEN_STEPS = ['identity', 'address', 'questionnaire'];
+export const ACCOUNT_TYPES = ['individual', 'corporate'];
+export const isCorporate = (v) => v?.accountType === 'corporate';
+/** The steps this client goes through. */
+export const stepsFor = (v) => STEPS.filter((s) => !HIDDEN_STEPS.includes(s.key) && (!s.corporate || isCorporate(v)));
+export const showsStep = (v, key) => stepsFor(v).some((s) => s.key === key);
 
 // Sumsub idDocType values, in the order of the KYC document
 export const ID_TYPES = ['ID_CARD', 'DRIVERS', 'RESIDENCE_PERMIT', 'PASSPORT'];
@@ -58,7 +73,8 @@ export const OPTIONS = {
     'Savings / Return on Investments',
     'Inheritance / Gift',
     'Pensions',
-    'Third Party'
+    'Third Party',
+    'Business Operations (Corporate)'
   ],
   investmentExperience: ['0-1 Year', '1-5 Years', '5-10 Years', '10+ Years'],
   marketExperience: ['None', 'FX', 'Precious Metals', 'Stocks', 'Commodities', 'Indices', 'Futures', 'Crypto CFDs'],
@@ -70,19 +86,24 @@ export const PEP_TEXT =
 export const AGREEMENT_TEXT =
   'I confirm that I have carefully read all the terms and conditions of the Risk Acknowledgement And Disclosure, and that the information I have provided is true and accurate. I agree to sign this legally binding contract and accept the associated responsibilities. I understand and agree that this electronic signature is equivalent to a handwritten signature.';
 
-const BOOLEANS = ['pep', 'agreement1', 'agreement2'];
+const BOOLEANS = ['pep', 'agreement1', 'agreement2', 'corporateAgreement'];
 
 /** The uploads of the form: field → document type stored with the file (the ID photos use the chosen ID type). */
 export const FILE_FIELDS = {
-  idFront: { label: 'front side of your document', side: 'FRONT_SIDE' },
-  idBack: { label: 'back side of your document', side: 'BACK_SIDE' },
-  poaFile: { label: 'utility bill or bank statement', docType: 'PROOF_OF_ADDRESS' }
+  idFront: { step: 'identity', label: 'front side of your document', side: 'FRONT_SIDE' },
+  idBack: { step: 'identity', label: 'back side of your document', side: 'BACK_SIDE' },
+  poaFile: { step: 'address', label: 'utility bill or bank statement', docType: 'PROOF_OF_ADDRESS' },
+  licenseFile: { step: 'license', label: 'business license', docType: 'BUSINESS_LICENSE' }
 };
 
+/** One shareholder (2.6 "Shareholders", optional, repeatable). */
+export const EMPTY_SHAREHOLDER = { name: '', passport: '', nationality: '', ratio: '' };
+export const MAX_SHAREHOLDERS = 10;
 /** A passport has no back side, so its back photo is not asked for. */
 export const needsBackSide = (idType) => idType !== 'PASSPORT';
 
 export const EMPTY_APPLICATION = {
+  accountType: 'individual', // individual | corporate (corporate adds 2.6–2.8)
   // 2.1 personal information
   firstName: '',
   lastName: '',
@@ -123,7 +144,32 @@ export const EMPTY_APPLICATION = {
   pep: false,
   // 2.5 client agreement
   agreement1: false,
-  agreement2: false
+  agreement2: false,
+  // 2.6 company information (corporate)
+  companyName: '',
+  regNumber: '',
+  regDate: '',
+  regCountry: '',
+  regCity: '',
+  regPostalCode: '',
+  regAddress: '',
+  secondaryPhone: '',
+  // 2.6 authorised person
+  repName: '',
+  repPassport: '',
+  repNationality: '',
+  repRatio: '',
+  repAddress: '',
+  repEmail: '',
+  repPhone: '',
+  repOccupation: '',
+  shareholders: [], // [{ name, passport, nationality, ratio }]
+  // 2.7 business license (corporate)
+  licenseCompanyName: '',
+  licenseRegNumber: '',
+  licenseFile: '',
+  // 2.8 client agreement (corporate)
+  corporateAgreement: false
 };
 
 // which step each field belongs to — the form marks a step's fields as touched on "Next"
@@ -135,13 +181,19 @@ export const STEP_FIELDS = {
     'education', 'employment', 'industry', 'industryOther', 'occupation', 'occupationOther', 'employer', 'previousEmployment',
     'experienceYears', 'income', 'sourceOfFunds', 'investmentExperience', 'marketExperience', 'usCitizen', 'tin', 'pep'
   ],
-  agreement: ['agreement1', 'agreement2']
+  agreement: ['agreement1', 'agreement2'],
+  company: [
+    'companyName', 'regNumber', 'regDate', 'regCountry', 'regCity', 'regPostalCode', 'regAddress', 'secondaryPhone',
+    'repName', 'repPassport', 'repNationality', 'repRatio', 'repAddress', 'repEmail', 'repPhone', 'repOccupation', 'shareholders'
+  ],
+  license: ['licenseCompanyName', 'licenseRegNumber', 'licenseFile'],
+  corporateAgreement: ['corporateAgreement']
 };
 
 /** Index of the first step that has one of `errors`' fields (-1 when none). */
 export const firstStepWithError = (errors) => STEPS.findIndex((s) => STEP_FIELDS[s.key].some((k) => errors[k]));
 
-const LIMITS = { address: 300, idNumber: 40, postalCode: 20, tin: 40, employer: 120, previousEmployment: 120, industryOther: 120, occupationOther: 120 };
+const LIMITS = { regAddress: 300, repAddress: 300, address: 300, idNumber: 40, postalCode: 20, tin: 40, employer: 120, previousEmployment: 120, industryOther: 120, occupationOther: 120 };
 
 /** Trimmed copy of the values (from a plain object or FormData). */
 export function readApplication(src) {
@@ -149,12 +201,41 @@ export function readApplication(src) {
   const out = {};
   for (const k of Object.keys(EMPTY_APPLICATION)) {
     const raw = get(k);
-    if (BOOLEANS.includes(k)) out[k] = raw === true || raw === 'true' || raw === 'on';
+    if (k === 'shareholders') out[k] = readShareholders(raw);
+    else if (BOOLEANS.includes(k)) out[k] = raw === true || raw === 'true' || raw === 'on';
     else out[k] = String(raw ?? '').trim().slice(0, LIMITS[k] ?? 160);
   }
-  for (const k of ['country', 'nationality', 'poaCountry']) out[k] = out[k].slice(0, 2).toUpperCase();
+  for (const k of ['country', 'nationality', 'poaCountry', 'regCountry', 'repNationality']) out[k] = out[k].slice(0, 2).toUpperCase();
+  if (!ACCOUNT_TYPES.includes(out.accountType)) out.accountType = 'individual';
+  for (const k of ['secondaryPhone', 'repPhone']) out[k] = out[k].replace(/[^\d+\s-]/g, '');
+  out.repEmail = out.repEmail.toLowerCase();
   return out;
 }
+
+function readShareholders(raw) {
+  let list = raw;
+  if (typeof list === 'string') {
+    try {
+      list = JSON.parse(list);
+    } catch {
+      list = [];
+    }
+  }
+  if (!Array.isArray(list)) return [];
+  return list.slice(0, MAX_SHAREHOLDERS).map((x) => ({
+    name: String(x?.name ?? '').trim().slice(0, 120),
+    passport: String(x?.passport ?? '').trim().slice(0, 40),
+    nationality: String(x?.nationality ?? '').trim().slice(0, 2).toUpperCase(),
+    ratio: String(x?.ratio ?? '').trim().slice(0, 6)
+  }));
+}
+
+const PHONE_RE = /^\+?[\d\s-]{6,20}$/;
+const ratioError = (r) => {
+  const n = Number(r);
+  if (r === '' || !Number.isFinite(n)) return 'Enter the shareholding ratio in %.';
+  if (n <= 0 || n > 100) return 'Use a value between 0 and 100.';
+};
 
 export function emailError(email) {
   if (!email.trim()) return 'Please enter your email address.';
@@ -232,12 +313,50 @@ export function validateStep(key, v) {
     if (!v.agreement1) e.agreement1 = 'Please confirm to sign the agreement.';
     if (!v.agreement2) e.agreement2 = 'Please confirm to sign the agreement.';
   }
+  if (key === 'company') {
+    need(e, v, 'companyName', 'Please enter the company name.');
+    need(e, v, 'regNumber', 'Please enter the registration number.');
+    if (!DATE_RE.test(v.regDate)) e.regDate = 'Please enter the registration date.';
+    else if (v.regDate > today()) e.regDate = 'The date cannot be in the future.';
+    if (!countryByCode(v.regCountry)) e.regCountry = 'Please choose the registration country.';
+    need(e, v, 'regCity', 'Please enter the registration city.');
+    if (!v.regPostalCode.trim()) e.regPostalCode = 'Please enter the postal code.';
+    else if (!/^[A-Za-z0-9 -]{2,20}$/.test(v.regPostalCode.trim())) e.regPostalCode = 'Please enter a valid postal code.';
+    if (v.regAddress.trim().length < 10) e.regAddress = 'Please enter the full registration address.';
+    if (v.secondaryPhone && !PHONE_RE.test(v.secondaryPhone)) e.secondaryPhone = 'Please enter a valid phone number.';
+    if (!v.repName.trim()) e.repName = 'Please enter the name.';
+    else if (!LETTERS_RE.test(v.repName.trim())) e.repName = 'Use letters only.';
+    if (!/^[A-Za-z0-9 -]{3,40}$/.test(v.repPassport.trim())) e.repPassport = 'Please enter the passport number.';
+    if (!countryByCode(v.repNationality)) e.repNationality = 'Please choose the nationality.';
+    const ratio = ratioError(v.repRatio);
+    if (ratio) e.repRatio = ratio;
+    if (v.repAddress.trim().length < 10) e.repAddress = 'Please enter the full residential address.';
+    const mail = emailError(v.repEmail);
+    if (mail) e.repEmail = mail;
+    if (!v.repPhone) e.repPhone = 'Please enter the phone number.';
+    else if (!PHONE_RE.test(v.repPhone)) e.repPhone = 'Please enter a valid phone number.';
+    need(e, v, 'repOccupation', 'Please enter the occupation.');
+    const bad = (v.shareholders ?? []).some((x) => !x.name || !x.passport || !countryByCode(x.nationality) || ratioError(x.ratio));
+    if (bad) e.shareholders = 'Complete every shareholder (name, passport, nationality and ratio) or remove it.';
+    else {
+      const total = Number(v.repRatio || 0) + (v.shareholders ?? []).reduce((n, x) => n + Number(x.ratio || 0), 0);
+      if (total > 100) e.shareholders = 'The shareholding ratios add up to more than 100%.';
+    }
+  }
+  if (key === 'license') {
+    need(e, v, 'licenseCompanyName', 'Please enter the company name.');
+    need(e, v, 'licenseRegNumber', 'Please enter the registration number.');
+    if (!v.licenseFile) e.licenseFile = 'Please upload the business license.';
+  }
+  if (key === 'corporateAgreement') {
+    if (!v.corporateAgreement) e.corporateAgreement = 'Please confirm to sign the agreement.';
+  }
   return e;
 }
 
-/** Errors of every step. */
+/** Errors of every step this client goes through (corporate steps only for a corporate client). */
 export function validateAll(v) {
-  return Object.assign({}, ...STEPS.map((s) => validateStep(s.key, v)));
+  return Object.assign({}, ...stepsFor(v).map((s) => validateStep(s.key, v)));
 }
 
 /** The phone number in international form, e.g. "+971 501234567". */

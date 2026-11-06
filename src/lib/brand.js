@@ -5,10 +5,12 @@ export const BRAND = {
   legalName: 'GTC Financial Consultancy L.L.C',
   // set the client support address here once it is confirmed; the portal hides the e-mail link while it is empty
   supportEmail: '',
-  // the two documents the client signs in the application's last step (src/app/apply). With a `url` (a PDF), the
-  // document is shown in a scrollable viewer above its checkbox, with a link to open it; without one, only the checkbox.
+  // the documents the client signs in the application's agreement step (src/app/apply). With a `url` (a PDF: a full
+  // https link, or a file in public/ such as '/docs/client-agreement.pdf'), the card gets a Read button that opens it.
   agreements: [
     { title: 'Client Agreement', url: '' },
     { title: 'Risk Acknowledgement and Disclosure', url: '' }
-  ]
+  ],
+  // signed by corporate clients in their last step (2.8)
+  corporateAgreement: { title: 'Client Agreement (Corporate)', url: '' }
 };

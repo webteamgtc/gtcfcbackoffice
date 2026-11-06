@@ -1,11 +1,12 @@
 import { connection } from 'next/server';
 import Logo from '@/app/components/Logo';
 import LiveApplicationForm from '@/app/components/LiveApplicationForm';
-import { FileIcon, HomeIcon, IdCardIcon, LockIcon, ShieldIcon, UserIcon } from '@/app/components/icons';
+import { FileIcon, LockIcon, ShieldIcon, UserIcon } from '@/app/components/icons';
 import SumsubVerification from '@/app/components/SumsubVerification';
 import { logout } from '@/app/actions/auth';
 import { BRAND } from '@/lib/brand';
 import { getCurrentUser } from '@/lib/user';
+import '@fontsource/great-vibes/latin-400.css'; // signature on the agreement step (bundled, no request to Google)
 import './apply.css';
 
 export const metadata = { title: `Apply | ${BRAND.name}` };
@@ -19,10 +20,8 @@ export const metadata = { title: `Apply | ${BRAND.name}` };
  */
 const HOW = [
   { Icon: UserIcon, title: 'Personal information', text: 'Your name, date of birth, country and nationality.' },
-  { Icon: IdCardIcon, title: 'Identity information', text: 'Photos and details of your identity document.' },
-  { Icon: HomeIcon, title: 'Proof of address', text: 'A utility bill or bank statement and your address.' },
-  { Icon: FileIcon, title: 'Questionnaire and agreement', text: 'A few background questions, then sign electronically.' },
-  { Icon: ShieldIcon, title: 'Verify your identity', text: 'Photograph your documents and take a quick selfie. We then review your application.' }
+  { Icon: FileIcon, title: 'Client agreement', text: 'Read and sign electronically (companies add their details and license).' },
+  { Icon: ShieldIcon, title: 'Verify your identity', text: 'Your ID, proof of address, a short questionnaire and a selfie with Sumsub. We then review your application.' }
 ];
 
 async function currentApplicant() {

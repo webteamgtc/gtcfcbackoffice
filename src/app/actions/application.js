@@ -7,14 +7,15 @@ import { GridFSBucket, ObjectId } from 'mongodb';
 import { getDb } from '@/lib/mongodb';
 import { createSession } from '@/lib/session';
 import { DOCUMENTS_BUCKET } from '@/lib/user';
-import { FILE_FIELDS, firstStepWithError, needsBackSide, readApplication, validateAll } from '@/lib/application';
+import { FILE_FIELDS, firstStepWithError, isCorporate, needsBackSide, readApplication, showsStep, validateAll } from '@/lib/application';
 
 /**
  * Client application, the five-step KYC journey (src/app/components/LiveApplicationForm.jsx, fields in src/lib/application.js):
  *   uploadApplicationFile → steps 2 and 3: stores one picked file (ID front / back, proof of address) in GridFS under the
  *                           form's draft id, before the client exists; picking again replaces it. → { ok, id } / { error }
  *   submitApplication     → last step: validates every step and that the uploaded files are there, saves the client to
- *                           `user_record` (answers under `kyc`), links the files to the client, and signs the client in
+ *                           `user_record` (answers under `kyc`; a corporate client also `kyc.company`, `kyc.license`
+ *                           and the corporate agreement), links the files to the client, and signs the client in
  *                           (session cookie) for the Sumsub verification that follows.
  *                           → { ok, reference } or { step (0-based), errors } / { error }
  */
@@ -63,7 +64,9 @@ export async function submitApplication(input) {
   let db;
   let insertedId;
   const now = new Date();
-  const wanted = Object.keys(FILE_FIELDS).filter((k) => k !== 'idBack' || needsBackSide(v.idType));
+  const corporate = isCorporate(v);
+  // only the uploads of the steps this client was shown (steps Sumsub collects are hidden, see HIDDEN_STEPS)
+  const wanted = Object.keys(FILE_FIELDS).filter((k) => showsStep(v, FILE_FIELDS[k].step) && (k !== 'idBack' || needsBackSide(v.idType)));
   try {
     db = await getDb();
 
@@ -86,37 +89,76 @@ export async function submitApplication(input) {
       country: v.country,
       nationality: v.nationality,
       partnerCode: v.partnerCode,
+      accountType: v.accountType,
       kyc: {
-        identity: {
-          documentType: v.idType,
-          firstName: v.idFirstName,
-          lastName: v.idLastName,
-          idNumber: v.idNumber,
-          nationality: v.nationality,
-          frontFileId: new ObjectId(v.idFront),
-          backFileId: wanted.includes('idBack') ? new ObjectId(v.idBack) : null
-        },
-        address: { country: v.poaCountry, postalCode: v.postalCode, address: v.address, proofDate: v.proofDate || null, fileId: new ObjectId(v.poaFile) },
-        questionnaire: {
-          education: v.education,
-          employment: v.employment,
-          industry: v.industry === 'Other' ? `Other: ${v.industryOther}` : v.industry,
-          occupation: v.occupation === 'Other' ? `Other: ${v.occupationOther}` : v.occupation,
-          employer: v.employer,
-          previousEmployment: v.previousEmployment,
-          experienceYears: v.experienceYears,
-          annualIncome: v.income,
-          sourceOfFunds: v.sourceOfFunds,
-          investmentExperience: v.investmentExperience,
-          marketExperience: v.marketExperience,
-          usCitizen: v.usCitizen === 'Yes',
-          tin: v.tin,
-          pepDeclarationAccepted: true
-        },
+        ...(showsStep(v, 'identity')
+          ? {
+              identity: {
+                documentType: v.idType,
+                firstName: v.idFirstName,
+                lastName: v.idLastName,
+                idNumber: v.idNumber,
+                nationality: v.nationality,
+                frontFileId: new ObjectId(v.idFront),
+                backFileId: wanted.includes('idBack') ? new ObjectId(v.idBack) : null
+              }
+            }
+          : {}),
+        ...(showsStep(v, 'address')
+          ? { address: { country: v.poaCountry, postalCode: v.postalCode, address: v.address, proofDate: v.proofDate || null, fileId: new ObjectId(v.poaFile) } }
+          : {}),
+        ...(showsStep(v, 'questionnaire')
+          ? {
+              questionnaire: {
+                education: v.education,
+                employment: v.employment,
+                industry: v.industry === 'Other' ? `Other: ${v.industryOther}` : v.industry,
+                occupation: v.occupation === 'Other' ? `Other: ${v.occupationOther}` : v.occupation,
+                employer: v.employer,
+                previousEmployment: v.previousEmployment,
+                experienceYears: v.experienceYears,
+                annualIncome: v.income,
+                sourceOfFunds: v.sourceOfFunds,
+                investmentExperience: v.investmentExperience,
+                marketExperience: v.marketExperience,
+                usCitizen: v.usCitizen === 'Yes',
+                tin: v.tin,
+                pepDeclarationAccepted: true
+              }
+            }
+          : {}),
+        collectedBySumsub: ['identity', 'address', 'questionnaire'].filter((k) => !showsStep(v, k)),
         agreements: {
           clientAgreement1: { accepted: true, acceptedAt: now },
-          clientAgreement2: { accepted: true, acceptedAt: now }
+          clientAgreement2: { accepted: true, acceptedAt: now },
+          ...(corporate ? { corporateAgreement1: { accepted: true, acceptedAt: now } } : {})
         },
+        ...(corporate
+          ? {
+              company: {
+                name: v.companyName,
+                registrationNumber: v.regNumber,
+                registrationDate: v.regDate,
+                registrationCountry: v.regCountry,
+                registrationCity: v.regCity,
+                postalCode: v.regPostalCode,
+                registrationAddress: v.regAddress,
+                secondaryPhone: v.secondaryPhone || null,
+                authorisedPerson: {
+                  name: v.repName,
+                  passport: v.repPassport,
+                  nationality: v.repNationality,
+                  shareholdingRatio: Number(v.repRatio),
+                  residentialAddress: v.repAddress,
+                  email: v.repEmail,
+                  phone: v.repPhone,
+                  occupation: v.repOccupation
+                },
+                shareholders: v.shareholders.map((x) => ({ ...x, ratio: Number(x.ratio) }))
+              },
+              license: { companyName: v.licenseCompanyName, registrationNumber: v.licenseRegNumber, fileId: new ObjectId(v.licenseFile) }
+            }
+          : {}),
         status: 'submitted',
         submittedAt: now
       },
