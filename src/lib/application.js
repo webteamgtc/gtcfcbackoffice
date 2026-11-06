@@ -58,8 +58,7 @@ export const OPTIONS = {
     'Savings / Return on Investments',
     'Inheritance / Gift',
     'Pensions',
-    'Third Party',
-    'Business Operations (Corporate)'
+    'Third Party'
   ],
   investmentExperience: ['0-1 Year', '1-5 Years', '5-10 Years', '10+ Years'],
   marketExperience: ['None', 'FX', 'Precious Metals', 'Stocks', 'Commodities', 'Indices', 'Futures', 'Crypto CFDs'],
