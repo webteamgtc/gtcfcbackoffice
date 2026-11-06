@@ -1,9 +1,12 @@
 'use server';
 
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
+import { GridFSBucket } from 'mongodb';
 import { revalidatePath } from 'next/cache';
-import { query } from '@/lib/db';
-import { deleteObject, documentKey, putObject } from '@/lib/storage';
+import { getDb } from '@/lib/mongodb';
 import { getSession } from '@/lib/session';
+import { DOCUMENTS_BUCKET } from '@/lib/user';
 
 const MAX_BYTES = 10 * 1024 * 1024;
 const ALLOWED_TYPES = ['application/pdf', 'image/jpeg', 'image/png'];
@@ -22,19 +25,12 @@ export async function uploadDocument(state, formData) {
   if (file.size > MAX_BYTES) return { error: 'File must be 10MB or smaller.' };
 
   try {
-    // the file goes to OSS (private object), the row in client_documents keeps its key;
-    // review_status follows the Sumsub review (src/lib/verification.js)
-    const key = documentKey(session.userId, file.type);
-    await putObject(key, Buffer.from(await file.arrayBuffer()), file.type);
-    try {
-      await query(
-        'INSERT INTO client_documents (application_id, doc_type, filename, content_type, size, storage_key) VALUES (?, ?, ?, ?, ?, ?)',
-        [session.userId, docType, file.name.slice(0, 255), file.type, file.size, key]
-      );
-    } catch (err) {
-      await deleteObject(key).catch(() => {}); // no orphan file without a row
-      throw err;
-    }
+    const bucket = new GridFSBucket(await getDb(), { bucketName: DOCUMENTS_BUCKET });
+    const upload = bucket.openUploadStream(file.name, {
+      // sumsubStatus moves past 'pending' once the Sumsub integration sends the file
+      metadata: { userId: session.userId, docType, contentType: file.type, sumsubStatus: 'pending' }
+    });
+    await pipeline(Readable.fromWeb(file.stream()), upload);
   } catch (err) {
     console.error('Document upload error:', err);
     return { error: 'Upload failed. Please try again.' };

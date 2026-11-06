@@ -6,19 +6,21 @@ import SumsubVerification from '@/app/components/SumsubVerification';
 import { logout } from '@/app/actions/auth';
 import { BRAND } from '@/lib/brand';
 import { getCurrentUser } from '@/lib/user';
+import './apply.css';
 
 export const metadata = { title: `Apply | ${BRAND.name}` };
 
 /**
- * Client application: the five-step form beside a navy panel explaining the process.
+ * Client application. Signed out: the animated step-by-step form (LiveApplicationForm draws its own frame).
+ * Signed in (already applied): the navy panel explaining the process beside the identity verification.
  * Served at "/" while the portal is hidden (src/lib/features.js, src/proxy.js).
  * A client who has already applied (signed in by the submission) sees their identity verification instead of the form.
  * Wording stays within the CAT 5 licence: consultancy client application, no trading terms.
  */
 const HOW = [
-  { Icon: UserIcon, title: 'Personal information', text: 'Your name, country and a verified email.' },
-  { Icon: IdCardIcon, title: 'Identity information', text: 'The details on your identity document.' },
-  { Icon: HomeIcon, title: 'Proof of address', text: 'Your residential address.' },
+  { Icon: UserIcon, title: 'Personal information', text: 'Your name, date of birth, country and nationality.' },
+  { Icon: IdCardIcon, title: 'Identity information', text: 'Photos and details of your identity document.' },
+  { Icon: HomeIcon, title: 'Proof of address', text: 'A utility bill or bank statement and your address.' },
   { Icon: FileIcon, title: 'Questionnaire and agreement', text: 'A few background questions, then sign electronically.' },
   { Icon: ShieldIcon, title: 'Verify your identity', text: 'Photograph your documents and take a quick selfie. We then review your application.' }
 ];
@@ -35,6 +37,7 @@ async function currentApplicant() {
 
 export default async function ApplyPage() {
   const user = await currentApplicant();
+  if (!user) return <LiveApplicationForm />;
 
   return (
     <main className="apply">
@@ -66,25 +69,21 @@ export default async function ApplyPage() {
       </aside>
 
       <section className="apply-main">
-        {user ? (
-          <div className="apply-card">
-            <div className="apply-head">
-              <h2>
-                Welcome back, <span className="cap">{user.firstName || user.email}</span>
-              </h2>
-              <p>Your application has been received. Complete your identity verification below.</p>
-            </div>
-            <SumsubVerification status={user.verificationStatus} />
-            <form action={logout} className="verify-switch">
-              Not you?{' '}
-              <button type="submit" className="link-btn">
-                Start a new application
-              </button>
-            </form>
+        <div className="apply-card">
+          <div className="apply-head">
+            <h2>
+              Welcome back, <span className="cap">{user.firstName || user.email}</span>
+            </h2>
+            <p>Your application has been received. Complete your identity verification below.</p>
           </div>
-        ) : (
-          <LiveApplicationForm />
-        )}
+          <SumsubVerification status={user.verificationStatus} />
+          <form action={logout} className="verify-switch">
+            Not you?{' '}
+            <button type="submit" className="link-btn">
+              Start a new application
+            </button>
+          </form>
+        </div>
         <p className="auth-foot">
           © {new Date().getFullYear()} {BRAND.legalName}
         </p>

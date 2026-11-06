@@ -72,3 +72,27 @@ export const ChevronLeftIcon = () => (
 export const ChevronRightIcon = () => (
   <svg {...base}><path d="m9.5 6 6 6-6 6" /></svg>
 );
+export const BriefcaseIcon = () => (
+  <svg {...base}><rect x="3" y="7" width="18" height="13" rx="2" /><path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2M3 13h18" /></svg>
+);
+export const WalletIcon = () => (
+  <svg {...base}><path d="M4 7h14a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a1 1 0 0 1-1-1z" /><path d="M4 7l11-3 1 3M16 13.5h.01" /></svg>
+);
+export const ChartIcon = () => (
+  <svg {...base}><path d="M4 20V4M4 20h16" /><path d="m7 15 4-4 3 3 5-6" /></svg>
+);
+export const PenIcon = () => (
+  <svg {...base}><path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16z" /><path d="m13.5 6.5 4 4" /></svg>
+);
+export const SparkIcon = () => (
+  <svg {...base}><path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5 18 18M6 18l2.5-2.5M15.5 8.5 18 6" /></svg>
+);
+export const BuildingIcon = () => (
+  <svg {...base}><path d="M4 21V5a1 1 0 0 1 1-1h9a1 1 0 0 1 1 1v16" /><path d="M15 9h4a1 1 0 0 1 1 1v11M3 21h18M8 8h3M8 12h3M8 16h3" /></svg>
+);
+export const UsersIcon = () => (
+  <svg {...base}><circle cx="9" cy="8" r="3.5" /><path d="M2.5 20c0-3.5 3-5.5 6.5-5.5s6.5 2 6.5 5.5" /><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14.8c2 .6 3.5 2.3 3.5 5.2" /></svg>
+);
+export const PlusIcon = () => (
+  <svg {...base}><path d="M12 5v14M5 12h14" /></svg>
+);

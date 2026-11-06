@@ -1,54 +1,41 @@
 import 'server-only';
-import { query } from '@/lib/db';
+import { ObjectId } from 'mongodb';
+import { getDb } from '@/lib/mongodb';
+import { DOCUMENTS_BUCKET } from '@/lib/user';
 import { getApplicantByUserId, statusFromReview } from '@/lib/sumsub';
 
 /**
- * Stores a Sumsub review in client_verifications (one row per application, db/schema.sql) and mirrors the outcome onto
- * the client's dashboard uploads (client_documents.review_status), which is what the dashboard reads.
- * Called by the webhook (POST /api/sumsub/webhook) and by syncFromSumsub (asks Sumsub directly).
- * `userId` is the applicant's externalUserId = client_applications.id.
+ * Stores a Sumsub review on the client (user_record.sumsub + kyc.verificationStatus) and mirrors the outcome onto the
+ * client's uploaded files (metadata.sumsubStatus), which is what the dashboard reads.
+ * Called by the webhook (POST /api/sumsub/webhook) and by syncVerification (asks Sumsub directly).
  */
 const FILE_STATUS = { approved: 'approved', rejected: 'rejected', resubmit: 'rejected', pending: 'pending', started: 'pending' };
 
 export async function saveVerification(userId, { applicantId, levelName, reviewStatus, reviewResult, event }) {
-  if (!/^\d+$/.test(String(userId))) return null;
+  if (!ObjectId.isValid(userId)) return null;
   const status = statusFromReview({ reviewStatus, reviewResult });
-  try {
-    await query(
-      `INSERT INTO client_verifications
-         (application_id, status, applicant_id, level_name, review_status, review_answer, reject_type, reject_labels, moderation_comment, client_comment, last_event)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE
-         status = VALUES(status),
-         applicant_id = COALESCE(VALUES(applicant_id), applicant_id),
-         level_name = COALESCE(VALUES(level_name), level_name),
-         review_status = VALUES(review_status),
-         review_answer = VALUES(review_answer),
-         reject_type = VALUES(reject_type),
-         reject_labels = VALUES(reject_labels),
-         moderation_comment = VALUES(moderation_comment),
-         client_comment = VALUES(client_comment),
-         last_event = COALESCE(VALUES(last_event), last_event)`,
-      [
-        userId,
-        status,
-        applicantId ?? null,
-        levelName ?? null,
-        reviewStatus ?? null,
-        reviewResult?.reviewAnswer ?? null,
-        reviewResult?.reviewRejectType ?? null,
-        JSON.stringify(reviewResult?.rejectLabels ?? []),
-        reviewResult?.moderationComment ?? null,
-        reviewResult?.clientComment ?? null,
-        event ?? null
-      ]
-    );
-  } catch (err) {
-    // no such application (foreign key): e.g. a webhook for an applicant from another system
-    if (err?.code === 'ER_NO_REFERENCED_ROW_2') return null;
-    throw err;
-  }
-  await query('UPDATE client_documents SET review_status = ? WHERE application_id = ?', [FILE_STATUS[status], userId]);
+  const db = await getDb();
+  const now = new Date();
+  const { matchedCount } = await db.collection('user_record').updateOne(
+    { _id: new ObjectId(userId) },
+    {
+      $set: {
+        ...(applicantId ? { 'sumsub.applicantId': applicantId } : {}),
+        ...(levelName ? { 'sumsub.levelName': levelName } : {}),
+        'sumsub.reviewStatus': reviewStatus ?? null,
+        'sumsub.reviewAnswer': reviewResult?.reviewAnswer ?? null,
+        'sumsub.reviewRejectType': reviewResult?.reviewRejectType ?? null,
+        'sumsub.rejectLabels': reviewResult?.rejectLabels ?? [],
+        'sumsub.moderationComment': reviewResult?.moderationComment ?? null,
+        'sumsub.clientComment': reviewResult?.clientComment ?? null,
+        ...(event ? { 'sumsub.lastEvent': event } : {}),
+        'sumsub.updatedAt': now,
+        'kyc.verificationStatus': status
+      }
+    }
+  );
+  if (!matchedCount) return null;
+  await db.collection(`${DOCUMENTS_BUCKET}.files`).updateMany({ 'metadata.userId': userId }, { $set: { 'metadata.sumsubStatus': FILE_STATUS[status] } });
   return status;
 }
 

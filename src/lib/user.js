@@ -1,33 +1,33 @@
 import 'server-only';
-import { query, queryOne } from '@/lib/db';
+import { ObjectId } from 'mongodb';
+import { getDb } from '@/lib/mongodb';
 import { getSession } from '@/lib/session';
-import { fullPhone } from '@/lib/application';
 
-/** The signed-in client (a row of client_applications, see db/schema.sql), or null. Never includes the password. */
+export const DOCUMENTS_BUCKET = 'user_documents';
+
+// accepts camelCase or snake_case field names in user_record
+const pick = (doc, ...keys) => keys.map((k) => doc[k]).find((v) => v !== undefined && v !== null && v !== '');
+
 export async function getCurrentUser() {
   const session = await getSession();
-  if (!/^\d+$/.test(String(session?.userId ?? ''))) return null;
+  if (!session?.userId || !ObjectId.isValid(session.userId)) return null;
 
-  const row = await queryOne(
-    `SELECT a.id, a.firstName, a.lastName, a.email, a.emailVerifiedAt, a.country, a.phone, a.partnerCode, v.status AS verificationStatus
-       FROM client_applications a LEFT JOIN client_verifications v ON v.application_id = a.id
-      WHERE a.id = ?`,
-    [session.userId]
-  );
-  if (!row) return null;
+  const db = await getDb();
+  const doc = await db.collection('user_record').findOne({ _id: new ObjectId(session.userId) }, { projection: { password: 0 } });
+  if (!doc) return null;
 
+  const [first, ...rest] = String(doc.name ?? '').trim().split(/\s+/);
   return {
-    id: String(row.id),
-    firstName: row.firstName ?? '',
-    lastName: row.lastName ?? '',
-    email: row.email ?? '',
-    emailVerified: Boolean(row.emailVerifiedAt),
-    country: row.country ?? '',
-    // stored as the national number; shown (and sent to Sumsub) in international form
-    phone: row.phone ? fullPhone(row.country, row.phone) : '',
-    partnerCode: row.partnerCode ?? '',
-    // Sumsub outcome (client_verifications, src/lib/verification.js); null before verification has started
-    verificationStatus: row.verificationStatus ?? null
+    id: String(doc._id),
+    firstName: pick(doc, 'firstName', 'first_name') ?? first ?? '',
+    lastName: pick(doc, 'lastName', 'last_name') ?? rest.join(' '),
+    email: doc.email ?? '',
+    emailVerified: Boolean(pick(doc, 'emailVerified', 'email_verified')),
+    country: pick(doc, 'country', 'countryOfResidence', 'country_of_residence') ?? '',
+    phone: pick(doc, 'phone', 'phoneNumber', 'phone_number', 'mobile') ?? '',
+    partnerCode: pick(doc, 'partnerCode', 'partner_code') ?? '',
+    // Sumsub outcome (src/lib/verification.js); null before verification has started
+    verificationStatus: doc.kyc?.verificationStatus ?? null
   };
 }
 
@@ -47,18 +47,19 @@ export function verificationStatus(documents) {
   return 'pending';
 }
 
-/** Files the client uploaded from the dashboard (client_documents), newest first, without their content. */
 export async function getUserDocuments(userId) {
-  const rows = await query(
-    'SELECT id, filename, size, doc_type, review_status, uploaded_at FROM client_documents WHERE application_id = ? ORDER BY uploaded_at DESC, id DESC',
-    [userId]
-  );
-  return rows.map((r) => ({
-    id: String(r.id),
-    filename: r.filename,
-    size: r.size,
-    docType: r.doc_type,
-    sumsubStatus: r.review_status ?? 'pending',
-    uploadedAt: new Date(r.uploaded_at).toISOString()
+  const db = await getDb();
+  const files = await db
+    .collection(`${DOCUMENTS_BUCKET}.files`)
+    .find({ 'metadata.userId': userId })
+    .sort({ uploadDate: -1 })
+    .toArray();
+  return files.map((f) => ({
+    id: String(f._id),
+    filename: f.filename,
+    size: f.length,
+    docType: f.metadata?.docType,
+    sumsubStatus: f.metadata?.sumsubStatus ?? 'pending',
+    uploadedAt: f.uploadDate.toISOString()
   }));
 }
