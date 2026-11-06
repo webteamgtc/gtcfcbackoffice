@@ -18,7 +18,9 @@
  * questionnaire parts), the form card sits on the right; on phones the panel becomes a header with a progress bar.
  * Styles: src/app/apply/apply.css.
  */
-import { Fragment, useEffect, useMemo, useRef, useState, useTransition } from 'react';
+import { useEffect, useMemo, useRef, useState, useTransition } from 'react';
+import dynamic from 'next/dynamic';
+import { AnimatePresence, MotionConfig, motion, useSpring, useTransform } from 'motion/react';
 import Logo from './Logo';
 import { submitApplication, uploadApplicationFile } from '@/app/actions/application';
 import {
@@ -29,6 +31,9 @@ import { COUNTRIES, DEFAULT_COUNTRY } from '@/lib/countries';
 import { DOC_LABELS } from '@/lib/kyc';
 import { BRAND } from '@/lib/brand';
 import SumsubVerification from './SumsubVerification';
+
+// the 3D globe behind the journey panel loads after the form (three.js stays out of the first load)
+const JourneyGlobe = dynamic(() => import('./JourneyGlobe'), { ssr: false });
 import DatePicker from './DatePicker';
 import {
   AlertIcon, ArrowRightIcon, BriefcaseIcon, BuildingIcon, ChartIcon, CheckIcon, ClockIcon, FileIcon, GlobeIcon, HomeIcon, IdCardIcon, LockIcon, MailIcon, PenIcon,
@@ -74,9 +79,11 @@ const SCREENS = [
   { step: 7, Icon: PenIcon, minutes: 1, title: 'Client agreement (corporate)', text: 'Please confirm to sign the agreement for the company electronically.', cheer: 'Last step' }
 ];
 const partsOf = (step) => SCREENS.filter((s) => s.step === step).length;
-// corporate screens come last, so an individual's screens are the start of the list
-const screensFor = (values) => (isCorporate(values) ? SCREENS : SCREENS.filter((s) => !STEPS[s.step].corporate));
-const firstScreenOf = (step) => SCREENS.findIndex((s) => s.step === step);
+/** The screens of the steps this client goes through (hidden steps and, for individuals, corporate steps left out). */
+const screensFor = (values) => {
+  const keys = stepsFor(values).map((s) => s.key);
+  return SCREENS.filter((s) => keys.includes(STEPS[s.step].key));
+};
 const fieldsOf = (screen) => screen.fields ?? STEP_FIELDS[STEPS[screen.step].key];
 
 /** Photos over 1.5 MB are redrawn at most 2400 px wide as JPEG, so they upload fast and fit the size limit. */
@@ -133,20 +140,32 @@ function Field({ id, label, required, optional, error, hint, wide, children }) {
   );
 }
 
-/** Ring showing the share of the journey done. */
+/** Ring showing the share of the journey done; the arc and the number spring to each new value. */
 function ProgressRing({ value, size = 88 }) {
   const r = 30;
   const c = 2 * Math.PI * r;
+  const v = useSpring(value, { stiffness: 70, damping: 18 });
+  useEffect(() => v.set(value), [v, value]);
+  const offset = useTransform(v, (x) => c * (1 - x / 100));
+  const label = useTransform(v, (x) => `${Math.round(x)}%`);
   return (
     <span className="ap-ring" style={{ width: size, height: size }} role="img" aria-label={`${value}% complete`}>
       <svg viewBox="0 0 72 72" width={size} height={size} aria-hidden="true">
         <circle cx="36" cy="36" r={r} className="ap-ring-track" />
-        <circle cx="36" cy="36" r={r} className="ap-ring-bar" strokeDasharray={c} strokeDashoffset={c * (1 - value / 100)} />
+        <motion.circle cx="36" cy="36" r={r} className="ap-ring-bar" strokeDasharray={c} style={{ strokeDashoffset: offset }} />
       </svg>
-      <strong>{value}%</strong>
+      <motion.strong>{label}</motion.strong>
     </span>
   );
 }
+
+/** Screens slide in from the side they come from, with a short blur. */
+const SCREEN_MOTION = {
+  enter: (dir) => ({ opacity: 0, x: dir === 'back' ? -56 : 56, filter: 'blur(6px)' }),
+  center: { opacity: 1, x: 0, filter: 'blur(0px)', transitionEnd: { filter: 'none' } },
+  exit: (dir) => ({ opacity: 0, x: dir === 'back' ? 56 : -56, filter: 'blur(6px)' })
+};
+const SPRING = { type: 'spring', stiffness: 420, damping: 36 };
 
 /** Coloured pieces that fall once over the success card (decorative). */
 function Confetti() {
@@ -199,7 +218,9 @@ export default function LiveApplicationForm() {
   const screens = screensFor(values);
   const steps = stepsFor(values);
   const current = screens[screen];
-  const stepIndex = current.step;
+  const stepIndex = current.step; // index in STEPS
+  const position = (g) => steps.indexOf(STEPS[g]); // place among the steps shown
+  const firstScreenOf = (g) => screens.findIndex((s) => s.step === g);
   const last = screen === screens.length - 1;
   const cheer = last ? 'Last step' : current.cheer;
   const progress = done ? 100 : Math.round((screen / screens.length) * 100);
@@ -266,6 +287,7 @@ export default function LiveApplicationForm() {
       <div className={`chips${cols ? ` cols-${cols}` : ''}`}>
         {options.map((o) => (
           <label key={o.value} className={values[k] === o.value ? 'chip on' : 'chip'}>
+            {values[k] === o.value && <motion.span layoutId={`chip-${k}`} className="chip-glow" transition={SPRING} aria-hidden="true" />}
             <input
               type="radio"
               name={k}
@@ -279,7 +301,7 @@ export default function LiveApplicationForm() {
             <span className="chip-tick" aria-hidden="true">
               <CheckIcon />
             </span>
-            {o.label}
+            <span className="chip-text">{o.label}</span>
           </label>
         ))}
       </div>
@@ -324,6 +346,117 @@ export default function LiveApplicationForm() {
       )}
     </Field>
   );
+
+  /**
+   * Agreement step (2.5, 2.8): one card per document (Read opens it when a link is set in src/lib/brand.js), an
+   * "agree to all" switch, then the signature: the client's name and today's date, shown once everything is accepted.
+   */
+  const [openDoc, setOpenDoc] = useState(null);
+  const signingField = (docs, notice, company) => {
+    const allOn = docs.every((d) => values[d.k]);
+    const setAll = (on) => {
+      setValues((v) => ({ ...v, ...Object.fromEntries(docs.map((d) => [d.k, on])) }));
+      setTouched((t) => ({ ...t, ...Object.fromEntries(docs.map((d) => [d.k, true])) }));
+      setServerErrors((e) => Object.fromEntries(Object.entries(e).filter(([k]) => !docs.some((d) => d.k === k))));
+    };
+    const name = [values.firstName, values.lastName].filter(Boolean).join(' ');
+    const signedOn = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+    return (
+      <div className="sign">
+        {docs.length > 1 && (
+          <label className={`agree-all${allOn ? ' is-on' : ''}`}>
+            <input type="checkbox" checked={allOn} onChange={(e) => setAll(e.target.checked)} />
+            <span className="agree-switch" aria-hidden="true" />
+            <span>
+              <strong>I agree to all documents</strong>
+              <small>{docs.filter((d) => values[d.k]).length} of {docs.length} accepted</small>
+            </span>
+          </label>
+        )}
+        <ol className="docs">
+          {docs.map((d, i) => (
+            <li key={d.k} className={`doc${values[d.k] ? ' is-on' : ''}${err(d.k) ? ' is-bad' : ''}`}>
+              <div className="doc-head">
+                <span className="doc-icon">
+                  <FileIcon />
+                  {values[d.k] && (
+                    <i className="doc-check">
+                      <CheckIcon />
+                    </i>
+                  )}
+                </span>
+                <span className="doc-title">
+                  <small>Document {i + 1}</small>
+                  <strong>{d.title}</strong>
+                </span>
+                {d.url && (
+                  <button type="button" className="file-btn" onClick={() => setOpenDoc(openDoc === d.k ? null : d.k)} aria-expanded={openDoc === d.k}>
+                    {openDoc === d.k ? 'Close' : 'Read'}
+                  </button>
+                )}
+              </div>
+              {d.url && openDoc === d.k && (
+                <div className="agreement-doc ap-pop">
+                  <iframe src={d.url} title={d.title} loading="lazy" />
+                  <a href={d.url} target="_blank" rel="noopener noreferrer" className="help-link">
+                    <FileIcon /> Open in a new tab
+                  </a>
+                </div>
+              )}
+              <label className="doc-accept">
+                <input type="checkbox" checked={values[d.k]} onChange={set(d.k)} onBlur={blur(d.k)} />
+                <span className="declare-box" aria-hidden="true">
+                  <CheckIcon />
+                </span>
+                <span>{AGREEMENT_TEXT}</span>
+              </label>
+              {err(d.k) && (
+                <p className="field-error" role="alert">
+                  <AlertIcon /> {err(d.k)}
+                </p>
+              )}
+            </li>
+          ))}
+        </ol>
+        <div className={`signature${allOn ? ' is-signed' : ''}`} aria-live="polite">
+          <div className="signature-line">
+            {allOn ? (
+              <span className="signature-name" key={name}>
+                {name || 'Your signature'}
+              </span>
+            ) : (
+              <span className="signature-wait">
+                <PenIcon /> Your signature appears here once you accept {docs.length > 1 ? 'all documents' : 'the agreement'}
+              </span>
+            )}
+          </div>
+          <dl className="signature-meta">
+            <div>
+              <dt>Signed by</dt>
+              <dd className="cap">{name || '—'}</dd>
+            </div>
+            {company && (
+              <div>
+                <dt>On behalf of</dt>
+                <dd>{company}</dd>
+              </div>
+            )}
+            <div>
+              <dt>Date</dt>
+              <dd>{signedOn}</dd>
+            </div>
+            <div>
+              <dt>Method</dt>
+              <dd>Electronic signature</dd>
+            </div>
+          </dl>
+          <p className="signature-note">
+            <LockIcon /> {notice}
+          </p>
+        </div>
+      </div>
+    );
+  };
 
   /** 2.6 "Shareholders": optional, add as many as needed (name, passport, nationality, ratio). */
   const shareholders = values.shareholders ?? [];
@@ -558,7 +691,11 @@ export default function LiveApplicationForm() {
 
   /* ---------------------------------------------------------------- pieces shared by the layouts */
 
-  const stepState = (i) => (done || i < stepIndex ? 'done' : i === stepIndex ? 'current' : 'todo');
+  const stepState = (g) => {
+    const p = position(g);
+    const now = position(stepIndex);
+    return done || p < now ? 'done' : p === now ? 'current' : 'todo';
+  };
 
   const bar = (
     <div className="ap-bar" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress} aria-label="Application progress">
@@ -569,7 +706,7 @@ export default function LiveApplicationForm() {
   const meta = (
     <p className="ap-meta">
       <span>
-        Step {stepIndex + 1} of {steps.length}
+        Step {position(stepIndex) + 1} of {steps.length}
         {current.part != null && ` · part ${current.part + 1} of ${partsOf(current.step)}`}
       </span>
       <span>
@@ -596,7 +733,7 @@ export default function LiveApplicationForm() {
   /* ---------------------------------------------------------------- one screen of fields */
 
   const fieldsFor = () => {
-    switch (screen) {
+    switch (SCREENS.indexOf(current)) { // the layout belongs to the screen, whatever its place in this journey
       case 0:
         return (
           <div className="apply-grid">
@@ -700,32 +837,9 @@ export default function LiveApplicationForm() {
           </div>
         );
       case 6:
-        return (
-          <div className="apply-agreements">
-            {BRAND.agreements.map((a, i) => {
-              const k = `agreement${i + 1}`;
-              return (
-                <Fragment key={k}>
-                  {declareField(
-                    k,
-                    a.title,
-                    AGREEMENT_TEXT,
-                    a.url ? (
-                      <div className="agreement-doc">
-                        <iframe src={a.url} title={a.title} loading="lazy" />
-                        <a href={a.url} target="_blank" rel="noopener noreferrer" className="help-link">
-                          <FileIcon /> Open {a.title} in a new tab
-                        </a>
-                      </div>
-                    ) : null
-                  )}
-                </Fragment>
-              );
-            })}
-            <p className="note warn-note">
-              <AlertIcon /> By submitting, you sign these documents electronically. Your signature is equivalent to a handwritten one.
-            </p>
-          </div>
+        return signingField(
+          BRAND.agreements.map((a, i) => ({ k: `agreement${i + 1}`, title: a.title, url: a.url })),
+          'By signing, you accept these documents electronically. Your signature is equivalent to a handwritten one.'
         );
       case 7:
         return (
@@ -779,13 +893,10 @@ export default function LiveApplicationForm() {
           </div>
         );
       default:
-        return (
-          <div className="apply-agreements">
-            {declareField('corporateAgreement', 'Client Agreement 1', AGREEMENT_TEXT)}
-            <p className="note warn-note">
-              <AlertIcon /> By submitting, you sign this agreement electronically on behalf of the company.
-            </p>
-          </div>
+        return signingField(
+          [{ k: 'corporateAgreement', title: BRAND.corporateAgreement.title, url: BRAND.corporateAgreement.url }],
+          'By signing, you accept this agreement electronically on behalf of the company.',
+          values.companyName
         );
     }
   };
@@ -800,7 +911,7 @@ export default function LiveApplicationForm() {
           Back
         </button>
       )}
-      <button type="submit" className={`btn btn-grow btn-next${last ? ' btn-gold' : ''}${pending ? ' is-busy' : ''}`} disabled={pending}>
+      <motion.button type="submit" className={`btn btn-grow btn-next${last ? ' btn-gold' : ''}${pending ? ' is-busy' : ''}`} disabled={pending} whileTap={{ scale: 0.97 }} transition={SPRING}>
         {pending ? (
           last ? 'Submitting your application…' : 'Checking…'
         ) : last ? (
@@ -812,7 +923,7 @@ export default function LiveApplicationForm() {
             Continue: {screens[screen + 1].title} <ArrowRightIcon />
           </>
         )}
-      </button>
+      </motion.button>
     </div>
   );
 
@@ -823,12 +934,14 @@ export default function LiveApplicationForm() {
           {alert}
         </p>
       )}
-      <div key={screen} className={`ap-screen ${dir}`}>
-        {head}
-        <div key={`s-${shake}`} className={shake ? 'ap-shake' : undefined}>
-          {fieldsFor()}
-        </div>
-      </div>
+      <AnimatePresence mode="wait" custom={dir} initial={false}>
+        <motion.div key={SCREENS.indexOf(current)} className="ap-screen" custom={dir} variants={SCREEN_MOTION} initial="enter" animate="center" exit="exit" transition={{ duration: 0.32, ease: [0.22, 1, 0.36, 1] }}>
+          {head}
+          <div key={`s-${shake}`} className={shake ? 'ap-shake' : undefined}>
+            {fieldsFor()}
+          </div>
+        </motion.div>
+      </AnimatePresence>
       {actions}
     </form>
   );
@@ -844,7 +957,7 @@ export default function LiveApplicationForm() {
         </span>
         <h2>Application submitted</h2>
         <p>
-          Thank you, <span className="cap">{values.firstName}</span>. We’ve received your application and documents. Please complete the identity verification below.
+          Thank you, <span className="cap">{values.firstName}</span>. We’ve received your application. Please complete the identity verification below.
         </p>
         <p className="apply-ref">
           Reference <strong>{done.reference}</strong>
@@ -857,80 +970,116 @@ export default function LiveApplicationForm() {
   const body = success || form;
   const year = new Date().getFullYear();
 
-  /* ---------------------------------------------------------------- layouts */
-
   /* ---------------------------------------------------------------- layout */
 
-  return (
-    <main className="ap">
-      <aside className="ap-a-panel">
-        <div className="ap-a-panel-inner">
-          <Logo variant="footer" width={150} priority className="apply-logo" />
-          <div className="ap-a-status">
-            <ProgressRing value={progress} />
-            <div>
-              <p className="auth-kicker">Your application</p>
-              <strong>{done ? 'Submitted' : cheer}</strong>
-              {!done && (
-                <small>
-                  <ClockIcon /> About {minutesLeft} min left
-                </small>
-              )}
-            </div>
-          </div>
-          <ol className="ap-journey">
-            {steps.map((s, i) => {
-              const state = stepState(i);
-              const Icon = STEP_ICONS[i];
-              return (
-                <li key={s.key} className={state} aria-current={state === 'current' ? 'step' : undefined}>
-                  {state === 'done' && !done && (
-                    <button type="button" className="ap-journey-link" onClick={() => go(firstScreenOf(i))} disabled={pending} aria-label={`Edit ${s.title}`} />
-                  )}
-                  <span className="ap-journey-dot">{state === 'done' ? <CheckIcon /> : <Icon />}</span>
-                  <span className="ap-journey-text">
-                    <strong>{s.title}</strong>
-                    {partsOf(i) > 1 && state === 'current' && (
-                      <span className="ap-parts" aria-label={`Part ${current.part + 1} of ${partsOf(i)}`}>
-                        {Array.from({ length: partsOf(i) }, (_, p) => (
-                          <i key={p} className={p < current.part ? 'done' : p === current.part ? 'on' : ''} />
-                        ))}
-                      </span>
-                    )}
-                  </span>
-                </li>
-              );
-            })}
-            <li className={done ? 'current' : 'todo'}>
-              <span className="ap-journey-dot">
-                <ShieldIcon />
-              </span>
-              <span className="ap-journey-text">
-                <strong>Verify your identity</strong>
-                <small>Photos of your documents and a quick selfie, after you submit.</small>
-              </span>
-            </li>
-          </ol>
-          <p className="apply-secure">
-            <LockIcon /> Your information is encrypted and kept confidential.
-          </p>
-        </div>
-      </aside>
-      <section className="ap-a-main">
-        {!done && (
-          <div className="ap-a-mobile">
-            {bar}
-            {meta}
-          </div>
-        )}
-        <div className="apply-card" ref={topRef}>
-          {body}
-        </div>
-        <p className="auth-foot">
-          © {year} {BRAND.legalName}
-        </p>
-      </section>
-    </main>
-  );
+  // a soft light follows the pointer across the form side (CSS variables, no re-render)
+  const spot = (e) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    e.currentTarget.style.setProperty('--mx', `${e.clientX - r.left}px`);
+    e.currentTarget.style.setProperty('--my', `${e.clientY - r.top}px`);
+  };
+  const stepsDone = done ? steps.length : position(stepIndex);
 
+  return (
+    <MotionConfig reducedMotion="user">
+      <main className="ap">
+        <aside className="ap-a-panel">
+          <JourneyGlobe done={stepsDone} total={steps.length} finished={Boolean(done)} />
+          <div className="ap-a-panel-inner">
+            <Logo variant="footer" width={150} priority className="apply-logo" />
+            <div className="ap-a-status ap-enter">
+              <ProgressRing value={progress} />
+              <div>
+                <p className="auth-kicker">Your application</p>
+                <AnimatePresence mode="wait" initial={false}>
+                  <motion.strong key={done ? 'done' : cheer} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.25 }}>
+                    {done ? 'Submitted' : cheer}
+                  </motion.strong>
+                </AnimatePresence>
+                {!done && (
+                  <small>
+                    <ClockIcon /> About {minutesLeft} min left
+                  </small>
+                )}
+              </div>
+            </div>
+            <ol className="ap-journey">
+              <AnimatePresence initial={false}>
+                {steps.map((s, i) => {
+                  const g = STEPS.indexOf(s);
+                  const state = stepState(g);
+                  const Icon = STEP_ICONS[g];
+                  return (
+                    <motion.li
+                      key={s.key}
+                      layout
+                      className={state}
+                      aria-current={state === 'current' ? 'step' : undefined}
+                      initial={{ opacity: 0, x: -16 }}
+                      animate={{ opacity: 1, x: 0, transition: { delay: 0.1 + i * 0.06 } }}
+                      exit={{ opacity: 0, x: -16 }}
+                    >
+                      {state === 'current' && <motion.span layoutId="journey-now" className="ap-journey-glow" transition={SPRING} aria-hidden="true" />}
+                      {state === 'done' && !done && (
+                        <button type="button" className="ap-journey-link" onClick={() => go(firstScreenOf(g))} disabled={pending} aria-label={`Edit ${s.title}`} />
+                      )}
+                      <span className="ap-journey-dot">
+                        <AnimatePresence mode="wait" initial={false}>
+                          <motion.span key={state === 'done' ? 'ok' : 'icon'} className="ap-journey-icon" initial={{ scale: 0.3, rotate: -40, opacity: 0 }} animate={{ scale: 1, rotate: 0, opacity: 1 }} exit={{ scale: 0.3, opacity: 0 }} transition={SPRING}>
+                            {state === 'done' ? <CheckIcon /> : <Icon />}
+                          </motion.span>
+                        </AnimatePresence>
+                      </span>
+                      <span className="ap-journey-text">
+                        <strong>{s.title}</strong>
+                        {partsOf(g) > 1 && state === 'current' && (
+                          <span className="ap-parts" aria-label={`Part ${current.part + 1} of ${partsOf(g)}`}>
+                            {Array.from({ length: partsOf(g) }, (_, p) => (
+                              <i key={p} className={p < current.part ? 'done' : p === current.part ? 'on' : ''} />
+                            ))}
+                          </span>
+                        )}
+                      </span>
+                    </motion.li>
+                  );
+                })}
+                <motion.li key="verify" layout className={done ? 'current' : 'todo'} initial={{ opacity: 0, x: -16 }} animate={{ opacity: 1, x: 0, transition: { delay: 0.1 + steps.length * 0.06 } }}>
+                  {done && <motion.span layoutId="journey-now" className="ap-journey-glow" transition={SPRING} aria-hidden="true" />}
+                  <span className="ap-journey-dot">
+                    <ShieldIcon />
+                  </span>
+                  <span className="ap-journey-text">
+                    <strong>Verify your identity</strong>
+                    <small>Your ID, proof of address, a short questionnaire and a selfie, with Sumsub after you submit.</small>
+                  </span>
+                </motion.li>
+              </AnimatePresence>
+            </ol>
+            <p className="apply-secure">
+              <LockIcon /> Your information is encrypted and kept confidential.
+            </p>
+          </div>
+        </aside>
+        <section className="ap-a-main" onPointerMove={spot}>
+          {!done && (
+            <div className="ap-a-mobile">
+              {bar}
+              {meta}
+            </div>
+          )}
+          {/* page-load entrances are CSS (.ap-enter), so the form shows even before the JavaScript has loaded */}
+          <div className="apply-card ap-enter" ref={topRef}>
+            <AnimatePresence mode="wait" initial={false}>
+              <motion.div key={done ? 'done' : 'form'} initial={{ opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.98 }} transition={{ duration: 0.35 }}>
+                {body}
+              </motion.div>
+            </AnimatePresence>
+          </div>
+          <p className="auth-foot">
+            © {year} {BRAND.legalName}
+          </p>
+        </section>
+      </main>
+    </MotionConfig>
+  );
 }

@@ -1,6 +1,6 @@
 // Client application (src/app/apply): the KYC journey from "Current KYC Journey in MAX CRM", with exactly the fields of
 // the document: sections 2.1–2.5 for every client, plus 2.6–2.8 (company, business licence, corporate agreement) when the
-// client picks the Corporate account type in step 1. The ID photos (front, back) and the proof of address file are uploaded in
+// client picks the Corporate account type in step 1. 2.2–2.4 are hidden for now (HIDDEN_STEPS): Sumsub collects them. The ID photos (front, back) and the proof of address file are uploaded in
 // steps 2 and 3 (actions/application.js → uploadApplicationFile, stored in GridFS); the form keeps their file ids.
 // Sumsub still runs after submission (src/app/components/SumsubVerification.jsx).
 // Field lists, options and rules shared by the form and the server actions. Pure, so the client form can use it too.
@@ -21,10 +21,16 @@ export const STEPS = [
   { key: 'license', title: 'Business License', corporate: true },
   { key: 'corporateAgreement', title: 'Client Agreement (Corporate)', corporate: true }
 ];
+/**
+ * Steps not shown because Sumsub collects the same thing in its verification after submit (ID document, proof of
+ * address, questionnaire). Remove a key to show that step in the form again; its fields and checks are all still here.
+ */
+export const HIDDEN_STEPS = ['identity', 'address', 'questionnaire'];
 export const ACCOUNT_TYPES = ['individual', 'corporate'];
 export const isCorporate = (v) => v?.accountType === 'corporate';
 /** The steps this client goes through. */
-export const stepsFor = (v) => STEPS.filter((s) => !s.corporate || isCorporate(v));
+export const stepsFor = (v) => STEPS.filter((s) => !HIDDEN_STEPS.includes(s.key) && (!s.corporate || isCorporate(v)));
+export const showsStep = (v, key) => stepsFor(v).some((s) => s.key === key);
 
 // Sumsub idDocType values, in the order of the KYC document
 export const ID_TYPES = ['ID_CARD', 'DRIVERS', 'RESIDENCE_PERMIT', 'PASSPORT'];
@@ -84,10 +90,10 @@ const BOOLEANS = ['pep', 'agreement1', 'agreement2', 'corporateAgreement'];
 
 /** The uploads of the form: field → document type stored with the file (the ID photos use the chosen ID type). */
 export const FILE_FIELDS = {
-  idFront: { label: 'front side of your document', side: 'FRONT_SIDE' },
-  idBack: { label: 'back side of your document', side: 'BACK_SIDE' },
-  poaFile: { label: 'utility bill or bank statement', docType: 'PROOF_OF_ADDRESS' },
-  licenseFile: { label: 'business license', docType: 'BUSINESS_LICENSE', corporate: true }
+  idFront: { step: 'identity', label: 'front side of your document', side: 'FRONT_SIDE' },
+  idBack: { step: 'identity', label: 'back side of your document', side: 'BACK_SIDE' },
+  poaFile: { step: 'address', label: 'utility bill or bank statement', docType: 'PROOF_OF_ADDRESS' },
+  licenseFile: { step: 'license', label: 'business license', docType: 'BUSINESS_LICENSE' }
 };
 
 /** One shareholder (2.6 "Shareholders", optional, repeatable). */
