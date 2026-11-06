@@ -22,7 +22,7 @@ import { Fragment, useEffect, useMemo, useRef, useState, useTransition } from 'r
 import Logo from './Logo';
 import { submitApplication, uploadApplicationFile } from '@/app/actions/application';
 import {
-  AGREEMENT_TEXT, EMPTY_APPLICATION, EMPTY_SHAREHOLDER, ID_TYPES, MAX_SHAREHOLDERS, OPTIONS, PEP_TEXT, STEPS, STEP_FIELDS, firstStepWithError, isCorporate, needsBackSide, stepsFor,
+  AGREEMENT_TEXT, EMPTY_APPLICATION, ID_TYPES, OPTIONS, PEP_TEXT, STEPS, STEP_FIELDS, firstStepWithError, needsBackSide,
   validateAll, validateStep
 } from '@/lib/application';
 import { COUNTRIES, DEFAULT_COUNTRY } from '@/lib/countries';
@@ -31,8 +31,8 @@ import { BRAND } from '@/lib/brand';
 import SumsubVerification from './SumsubVerification';
 import DatePicker from './DatePicker';
 import {
-  AlertIcon, ArrowRightIcon, BriefcaseIcon, BuildingIcon, ChartIcon, CheckIcon, ClockIcon, FileIcon, GlobeIcon, HomeIcon, IdCardIcon, LockIcon, MailIcon, PenIcon,
-  PhoneIcon, PlusIcon, ShieldIcon, SparkIcon, UploadIcon, UserIcon, UsersIcon, WalletIcon, XIcon
+  AlertIcon, ArrowRightIcon, BriefcaseIcon, ChartIcon, CheckIcon, ClockIcon, FileIcon, GlobeIcon, HomeIcon, IdCardIcon, LockIcon, PenIcon,
+  ShieldIcon, SparkIcon, UploadIcon, UserIcon, WalletIcon, XIcon
 } from './icons';
 
 const ACCEPT = '.pdf,.jpg,.jpeg,.png';
@@ -41,7 +41,7 @@ const COUNTRY_OPTIONS = COUNTRIES.map((c) => ({ value: c.code, label: c.name }))
 const asOptions = (list) => list.map((o) => ({ value: o, label: o }));
 const today = () => new Date().toISOString().slice(0, 10);
 
-const STEP_ICONS = [UserIcon, IdCardIcon, HomeIcon, BriefcaseIcon, PenIcon, BuildingIcon, FileIcon, PenIcon];
+const STEP_ICONS = [UserIcon, IdCardIcon, HomeIcon, BriefcaseIcon, PenIcon];
 
 /**
  * What the client sees, one screen at a time. The questionnaire (step 4) is split into three parts; each part checks
@@ -60,22 +60,9 @@ const SCREENS = [
     step: 3, part: 2, Icon: ChartIcon, minutes: 1, title: 'Experience and declarations', text: 'Your investment background and two short declarations.', cheer: 'Nearly done',
     fields: ['investmentExperience', 'marketExperience', 'usCitizen', 'tin', 'pep']
   },
-  { step: 4, Icon: PenIcon, minutes: 1, title: 'Client agreement', text: 'Please read the documents below and confirm to sign them electronically.', cheer: 'Almost there' },
-  // corporate clients only (2.6–2.8)
-  {
-    step: 5, part: 0, Icon: BuildingIcon, minutes: 2, title: 'Company details', text: 'The company exactly as it is registered.', cheer: 'Now your company',
-    fields: ['companyName', 'regNumber', 'regDate', 'regCountry', 'regCity', 'regPostalCode', 'regAddress', 'secondaryPhone']
-  },
-  {
-    step: 5, part: 1, Icon: UsersIcon, minutes: 2, title: 'Authorised person and shareholders', text: 'The person acting for the company, and any other shareholders.', cheer: 'Keep going',
-    fields: ['repName', 'repPassport', 'repNationality', 'repRatio', 'repAddress', 'repEmail', 'repPhone', 'repOccupation', 'shareholders']
-  },
-  { step: 6, Icon: FileIcon, minutes: 1, title: 'Business license', text: 'Upload the company’s trade or business license.', cheer: 'Nearly done' },
-  { step: 7, Icon: PenIcon, minutes: 1, title: 'Client agreement (corporate)', text: 'Please confirm to sign the agreement for the company electronically.', cheer: 'Last step' }
+  { step: 4, Icon: PenIcon, minutes: 1, title: 'Client agreement', text: 'Please read the documents below and confirm to sign them electronically.', cheer: 'Almost there' }
 ];
 const partsOf = (step) => SCREENS.filter((s) => s.step === step).length;
-// corporate screens come last, so an individual's screens are the start of the list
-const screensFor = (values) => (isCorporate(values) ? SCREENS : SCREENS.filter((s) => !STEPS[s.step].corporate));
 const firstScreenOf = (step) => SCREENS.findIndex((s) => s.step === step);
 const fieldsOf = (screen) => screen.fields ?? STEP_FIELDS[STEPS[screen.step].key];
 
@@ -196,8 +183,8 @@ export default function LiveApplicationForm() {
     topRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
-  const screens = screensFor(values);
-  const steps = stepsFor(values);
+  const screens = SCREENS;
+  const steps = STEPS;
   const current = screens[screen];
   const stepIndex = current.step;
   const last = screen === screens.length - 1;
@@ -307,80 +294,6 @@ export default function LiveApplicationForm() {
       {err(k) && (
         <p className="field-error" role="alert">
           <AlertIcon /> {err(k)}
-        </p>
-      )}
-    </div>
-  );
-
-  const ratioField = (k, label) => (
-    <Field id={`ap-${k}`} label={label} required error={err(k)}>
-      {control(
-        k,
-        null,
-        <>
-          <input id={`ap-${k}`} value={values[k]} onChange={(e) => setValue(k, e.target.value.replace(/[^\d.]/g, '').slice(0, 6))} onBlur={blur(k)} inputMode="decimal" placeholder="e.g. 51" aria-invalid={Boolean(err(k))} />
-          <span className="suffix">%</span>
-        </>
-      )}
-    </Field>
-  );
-
-  /** 2.6 "Shareholders": optional, add as many as needed (name, passport, nationality, ratio). */
-  const shareholders = values.shareholders ?? [];
-  const setShareholders = (list) => setValue('shareholders', list);
-  const editHolder = (i, key, value) => setShareholders(shareholders.map((x, n) => (n === i ? { ...x, [key]: value } : x)));
-  const shareholdersField = () => (
-    <div className="apply-wide holders">
-      {shareholders.map((h, i) => (
-        <div key={i} className="holder">
-          <div className="holder-head">
-            <strong>
-              <UsersIcon /> Shareholder {i + 1}
-            </strong>
-            <button type="button" className="file-btn icon" onClick={() => setShareholders(shareholders.filter((_, n) => n !== i))} aria-label={`Remove shareholder ${i + 1}`}>
-              <XIcon />
-            </button>
-          </div>
-          <div className="holder-grid">
-            <div className="control">
-              <input aria-label={`Shareholder ${i + 1} name`} value={h.name} onChange={(e) => editHolder(i, 'name', e.target.value)} placeholder="Name" />
-            </div>
-            <div className="control">
-              <input aria-label={`Shareholder ${i + 1} passport`} value={h.passport} onChange={(e) => editHolder(i, 'passport', e.target.value)} placeholder="Passport number" />
-            </div>
-            <div className="control select">
-              <select aria-label={`Shareholder ${i + 1} nationality`} value={h.nationality} onChange={(e) => editHolder(i, 'nationality', e.target.value)} className={h.nationality ? '' : 'is-empty'}>
-                <option value="" disabled>
-                  Nationality
-                </option>
-                {COUNTRY_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="control">
-              <input
-                aria-label={`Shareholder ${i + 1} shareholding ratio`}
-                value={h.ratio}
-                onChange={(e) => editHolder(i, 'ratio', e.target.value.replace(/[^\d.]/g, '').slice(0, 6))}
-                inputMode="decimal"
-                placeholder="Ratio"
-              />
-              <span className="suffix">%</span>
-            </div>
-          </div>
-        </div>
-      ))}
-      {shareholders.length < MAX_SHAREHOLDERS && (
-        <button type="button" className="holder-add" onClick={() => setShareholders([...shareholders, { ...EMPTY_SHAREHOLDER }])}>
-          <PlusIcon /> Add a shareholder
-        </button>
-      )}
-      {err('shareholders') && (
-        <p className="field-error" role="alert">
-          <AlertIcon /> {err('shareholders')}
         </p>
       )}
     </div>
@@ -525,10 +438,8 @@ export default function LiveApplicationForm() {
       return;
     }
 
-    // after step 1, the proof of address country starts as the country of residence;
-    // the business license starts with the company name and number from the company details
+    // after step 1, the proof of address country starts as the country of residence
     if (screen === 0) setValues((v) => ({ ...v, poaCountry: v.poaCountry || v.country }));
-    if (screens[screen + 1]?.step === 6) setValues((v) => ({ ...v, licenseCompanyName: v.licenseCompanyName || v.companyName, licenseRegNumber: v.licenseRegNumber || v.regNumber }));
     if (!last) return go(screen + 1);
 
     startTransition(async () => {
@@ -600,15 +511,6 @@ export default function LiveApplicationForm() {
       case 0:
         return (
           <div className="apply-grid">
-            {choiceField(
-              'accountType',
-              'Account type',
-              [
-                { value: 'individual', label: 'Individual' },
-                { value: 'corporate', label: 'Corporate' }
-              ],
-              { cols: 2 }
-            )}
             {textField('lastName', 'Surname', { icon: <UserIcon />, placeholder: 'Surname', autoComplete: 'family-name' })}
             {textField('firstName', 'Given name', { icon: <UserIcon />, placeholder: 'Given name', autoComplete: 'given-name' })}
             {dateField('dateOfBirth', 'Date of birth', { initialView: `${new Date().getFullYear() - 30}-01-01` })}
@@ -699,7 +601,7 @@ export default function LiveApplicationForm() {
             {declareField('pep', 'Politically Exposed Person (PEP)', PEP_TEXT)}
           </div>
         );
-      case 6:
+      default:
         return (
           <div className="apply-agreements">
             {BRAND.agreements.map((a, i) => {
@@ -724,66 +626,6 @@ export default function LiveApplicationForm() {
             })}
             <p className="note warn-note">
               <AlertIcon /> By submitting, you sign these documents electronically. Your signature is equivalent to a handwritten one.
-            </p>
-          </div>
-        );
-      case 7:
-        return (
-          <div className="apply-grid">
-            {textField('companyName', 'Company name', { icon: <BuildingIcon />, placeholder: 'As registered', autoComplete: 'organization', wide: true })}
-            {textField('regNumber', 'Registration number', { placeholder: 'Registration number', autoComplete: 'off' })}
-            {dateField('regDate', 'Registration date', { initialView: `${new Date().getFullYear() - 5}-01-01` })}
-            {selectField('regCountry', 'Registration country', COUNTRY_OPTIONS, { icon: <GlobeIcon />, placeholder: 'Choose a country' })}
-            {textField('regCity', 'Registration city', { placeholder: 'City' })}
-            {textField('regPostalCode', 'Postal code', { placeholder: 'Postal code' })}
-            {textField('secondaryPhone', 'Secondary phone number', { optional: true, icon: <PhoneIcon />, type: 'tel', inputMode: 'tel', placeholder: '+971 4 123 4567' })}
-            <Field id="ap-regAddress" label="Registration address" required error={err('regAddress')} wide>
-              <textarea
-                id="ap-regAddress"
-                className={`textarea${err('regAddress') ? ' is-bad' : ''}`}
-                value={values.regAddress}
-                onChange={set('regAddress')}
-                onBlur={blur('regAddress')}
-                rows={2}
-                maxLength={300}
-                placeholder="Office / building, street, area, city"
-                aria-invalid={Boolean(err('regAddress'))}
-              />
-            </Field>
-          </div>
-        );
-      case 8:
-        return (
-          <div className="apply-grid">
-            <p className="apply-section apply-wide">Authorised person</p>
-            {textField('repName', 'Name', { icon: <UserIcon />, placeholder: 'Full name as on the passport' })}
-            {textField('repPassport', 'Passport', { icon: <IdCardIcon />, placeholder: 'Passport number', autoComplete: 'off' })}
-            {selectField('repNationality', 'Nationality', COUNTRY_OPTIONS, { icon: <GlobeIcon />, placeholder: 'Choose a country' })}
-            {ratioField('repRatio', 'Shareholding ratio')}
-            {textField('repEmail', 'Email', { icon: <MailIcon />, type: 'email', placeholder: 'name@company.com', autoComplete: 'email' })}
-            {textField('repPhone', 'Phone number', { icon: <PhoneIcon />, type: 'tel', inputMode: 'tel', placeholder: '+971 50 123 4567', autoComplete: 'tel' })}
-            {textField('repOccupation', 'Occupation', { icon: <BriefcaseIcon />, placeholder: 'e.g. Director' })}
-            {textField('repAddress', 'Residential address', { icon: <HomeIcon />, placeholder: 'Building, street, area, city' })}
-            <p className="apply-section apply-wide">
-              Shareholders <span className="optional">(optional)</span>
-            </p>
-            {shareholdersField()}
-          </div>
-        );
-      case 9:
-        return (
-          <div className="apply-grid">
-            {textField('licenseCompanyName', 'Company name', { icon: <BuildingIcon />, placeholder: 'As on the license' })}
-            {textField('licenseRegNumber', 'Registration number', { placeholder: 'As on the license', autoComplete: 'off' })}
-            {fileField('licenseFile', 'License photo', { wide: true, hint: 'The full trade or business license, every page readable · JPG, PNG or PDF' })}
-          </div>
-        );
-      default:
-        return (
-          <div className="apply-agreements">
-            {declareField('corporateAgreement', 'Client Agreement 1', AGREEMENT_TEXT)}
-            <p className="note warn-note">
-              <AlertIcon /> By submitting, you sign this agreement electronically on behalf of the company.
             </p>
           </div>
         );

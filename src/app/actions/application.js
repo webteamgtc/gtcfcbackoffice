@@ -7,15 +7,14 @@ import { GridFSBucket, ObjectId } from 'mongodb';
 import { getDb } from '@/lib/mongodb';
 import { createSession } from '@/lib/session';
 import { DOCUMENTS_BUCKET } from '@/lib/user';
-import { FILE_FIELDS, firstStepWithError, isCorporate, needsBackSide, readApplication, validateAll } from '@/lib/application';
+import { FILE_FIELDS, firstStepWithError, needsBackSide, readApplication, validateAll } from '@/lib/application';
 
 /**
  * Client application, the five-step KYC journey (src/app/components/LiveApplicationForm.jsx, fields in src/lib/application.js):
  *   uploadApplicationFile → steps 2 and 3: stores one picked file (ID front / back, proof of address) in GridFS under the
  *                           form's draft id, before the client exists; picking again replaces it. → { ok, id } / { error }
  *   submitApplication     → last step: validates every step and that the uploaded files are there, saves the client to
- *                           `user_record` (answers under `kyc`; a corporate client also `kyc.company`, `kyc.license`
- *                           and the corporate agreement), links the files to the client, and signs the client in
+ *                           `user_record` (answers under `kyc`), links the files to the client, and signs the client in
  *                           (session cookie) for the Sumsub verification that follows.
  *                           → { ok, reference } or { step (0-based), errors } / { error }
  */
@@ -64,8 +63,7 @@ export async function submitApplication(input) {
   let db;
   let insertedId;
   const now = new Date();
-  const corporate = isCorporate(v);
-  const wanted = Object.keys(FILE_FIELDS).filter((k) => (k !== 'idBack' || needsBackSide(v.idType)) && (!FILE_FIELDS[k].corporate || corporate));
+  const wanted = Object.keys(FILE_FIELDS).filter((k) => k !== 'idBack' || needsBackSide(v.idType));
   try {
     db = await getDb();
 
@@ -88,7 +86,6 @@ export async function submitApplication(input) {
       country: v.country,
       nationality: v.nationality,
       partnerCode: v.partnerCode,
-      accountType: v.accountType,
       kyc: {
         identity: {
           documentType: v.idType,
@@ -118,35 +115,8 @@ export async function submitApplication(input) {
         },
         agreements: {
           clientAgreement1: { accepted: true, acceptedAt: now },
-          clientAgreement2: { accepted: true, acceptedAt: now },
-          ...(corporate ? { corporateAgreement1: { accepted: true, acceptedAt: now } } : {})
+          clientAgreement2: { accepted: true, acceptedAt: now }
         },
-        ...(corporate
-          ? {
-              company: {
-                name: v.companyName,
-                registrationNumber: v.regNumber,
-                registrationDate: v.regDate,
-                registrationCountry: v.regCountry,
-                registrationCity: v.regCity,
-                postalCode: v.regPostalCode,
-                registrationAddress: v.regAddress,
-                secondaryPhone: v.secondaryPhone || null,
-                authorisedPerson: {
-                  name: v.repName,
-                  passport: v.repPassport,
-                  nationality: v.repNationality,
-                  shareholdingRatio: Number(v.repRatio),
-                  residentialAddress: v.repAddress,
-                  email: v.repEmail,
-                  phone: v.repPhone,
-                  occupation: v.repOccupation
-                },
-                shareholders: v.shareholders.map((x) => ({ ...x, ratio: Number(x.ratio) }))
-              },
-              license: { companyName: v.licenseCompanyName, registrationNumber: v.licenseRegNumber, fileId: new ObjectId(v.licenseFile) }
-            }
-          : {}),
         status: 'submitted',
         submittedAt: now
       },
