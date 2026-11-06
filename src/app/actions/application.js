@@ -1,62 +1,57 @@
 'use server';
 
-import { randomBytes } from 'node:crypto';
-import bcrypt from 'bcryptjs';
-import { isDuplicate, query, queryOne } from '@/lib/db';
-import { encryptField } from '@/lib/fieldCrypto';
-import { verifyOtp } from '@/lib/otpStore';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
+import { headers } from 'next/headers';
+import { GridFSBucket, ObjectId } from 'mongodb';
+import { getDb } from '@/lib/mongodb';
 import { createSession } from '@/lib/session';
-import { applicationReceivedEmail, sendMail } from '@/lib/mailer';
-import { BRAND } from '@/lib/brand';
-import { emailError, firstStepWithError, readApplication, validateAll, validateStep } from '@/lib/application';
+import { DOCUMENTS_BUCKET } from '@/lib/user';
+import { FILE_FIELDS, firstStepWithError, isCorporate, needsBackSide, readApplication, validateAll } from '@/lib/application';
 
 /**
  * Client application, the five-step KYC journey (src/app/components/LiveApplicationForm.jsx, fields in src/lib/application.js):
- *   emailAvailable    → before the form asks POST /api/otp-smtp for a code: is the e-mail still free?
- *   checkApplication  → step 1 (personal information): validates it and the e-mailed code (src/lib/otpStore.js); nothing saved
- *   submitApplication → last step: every step again; uses up the code, saves the client as one row of `client_applications`
- *                       (MySQL, db/schema.sql: bcrypt password, ID number and TIN encrypted), signs the client in (session
- *                       cookie, for the Sumsub verification that follows, which collects the documents) and e-mails a
- *                       confirmation.
- *                       → { ok, email, reference } or { step (0-based), errors } / { error }
+ *   uploadApplicationFile → steps 2 and 3: stores one picked file (ID front / back, proof of address) in GridFS under the
+ *                           form's draft id, before the client exists; picking again replaces it. → { ok, id } / { error }
+ *   submitApplication     → last step: validates every step and that the uploaded files are there, saves the client to
+ *                           `user_record` (answers under `kyc`; a corporate client also `kyc.company`, `kyc.license`
+ *                           and the corporate agreement), links the files to the client, and signs the client in
+ *                           (session cookie) for the Sumsub verification that follows.
+ *                           → { ok, reference } or { step (0-based), errors } / { error }
  */
-const emailTaken = async (email) => Boolean(await queryOne('SELECT id FROM client_applications WHERE email = ?', [email]));
 
-const TAKEN = 'An application with this email already exists.';
-const CODE_ERRORS = {
-  invalid: 'That code is not correct. Please check the email we sent you.',
-  expired: 'This code has expired. Please request a new one.'
-};
+// kept under Vercel's 4.5MB request limit; the form shrinks large photos before sending them
+const MAX_BYTES = 4 * 1024 * 1024;
+const ALLOWED_TYPES = ['application/pdf', 'image/jpeg', 'image/png'];
+const DRAFT_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-// e.g. "GTC-7K2M9QXA": 8 characters without look-alikes (0/O, 1/I/L), random so references don't reveal volumes
-const REF_CHARS = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
-const newReference = () => `GTC-${Array.from(randomBytes(8), (b) => REF_CHARS[b % REF_CHARS.length]).join('')}`;
+const files = (db) => db.collection(`${DOCUMENTS_BUCKET}.files`);
 
-export async function emailAvailable(email) {
-  email = String(email ?? '').trim().toLowerCase();
-  const bad = emailError(email);
-  if (bad) return { error: bad };
-  try {
-    return (await emailTaken(email)) ? { error: TAKEN } : { ok: true };
-  } catch (err) {
-    console.error('[application] email check:', err);
-    return { error: 'Could not reach the server. Please try again.' };
-  }
-}
+export async function uploadApplicationFile(formData) {
+  const draftId = String(formData.get('draftId') ?? '');
+  const field = String(formData.get('field') ?? '');
+  const file = formData.get('file');
 
-export async function checkApplication(input) {
-  const v = readApplication(input);
-  const errors = validateStep('personal', v);
-  if (Object.keys(errors).length) return { errors };
+  if (!DRAFT_RE.test(draftId) || !FILE_FIELDS[field]) return { error: 'Please reload the page and try again.' };
+  if (!file || typeof file === 'string' || file.size === 0) return { error: 'Please choose a file.' };
+  if (!ALLOWED_TYPES.includes(file.type)) return { error: 'Only PDF, JPG or PNG files are allowed.' };
+  if (file.size > MAX_BYTES) return { error: 'The file is too large. Please use a file of 4 MB or less.' };
 
   try {
-    if (await emailTaken(v.email)) return { errors: { email: TAKEN } };
-    const code = await verifyOtp(v.email, v.code);
-    if (!code.success) return { errors: { code: CODE_ERRORS[code.reason] } };
-    return { ok: true };
+    const db = await getDb();
+    const bucket = new GridFSBucket(db, { bucketName: DOCUMENTS_BUCKET });
+    // replace an earlier upload for the same field of this (not yet submitted) application
+    const old = await files(db).find({ 'metadata.draftId': draftId, 'metadata.field': field, 'metadata.userId': { $exists: false } }, { projection: { _id: 1 } }).toArray();
+    for (const f of old) await bucket.delete(f._id).catch(() => {});
+
+    const upload = bucket.openUploadStream(file.name, {
+      metadata: { draftId, field, contentType: file.type, source: 'web-application', sumsubStatus: 'pending', uploadedAt: new Date() }
+    });
+    await pipeline(Readable.fromWeb(file.stream()), upload);
+    return { ok: true, id: String(upload.id) };
   } catch (err) {
-    console.error('[application] check:', err);
-    return { error: 'Could not reach the server. Please try again.' };
+    console.error('[application] upload:', err);
+    return { error: 'Upload failed. Please try again.' };
   }
 }
 
@@ -64,83 +59,124 @@ export async function submitApplication(input) {
   const v = readApplication(input);
   const errors = validateAll(v);
   if (Object.keys(errors).length) return { step: firstStepWithError(errors), errors };
+  if (!DRAFT_RE.test(v.draftId)) return { error: 'Please reload the page and try again.' };
 
-  let id;
-  let reference;
+  let db;
+  let insertedId;
+  const now = new Date();
+  const corporate = isCorporate(v);
+  const wanted = Object.keys(FILE_FIELDS).filter((k) => (k !== 'idBack' || needsBackSide(v.idType)) && (!FILE_FIELDS[k].corporate || corporate));
   try {
-    if (await emailTaken(v.email)) return { step: 0, errors: { email: TAKEN } };
-    const code = await verifyOtp(v.email, v.code, { consume: true });
-    if (!code.success) return { step: 0, errors: { code: CODE_ERRORS[code.reason] } };
+    db = await getDb();
 
-    const now = new Date();
-    const row = {
+    // every uploaded file must still be there, belong to this draft and not to another client
+    const missing = {};
+    for (const k of wanted) {
+      const ok =
+        ObjectId.isValid(v[k]) &&
+        (await files(db).findOne({ _id: new ObjectId(v[k]), 'metadata.draftId': v.draftId, 'metadata.field': k, 'metadata.userId': { $exists: false } }, { projection: { _id: 1 } }));
+      if (!ok) missing[k] = `Please upload the ${FILE_FIELDS[k].label} again.`;
+    }
+    if (Object.keys(missing).length) return { step: firstStepWithError(missing), errors: missing };
+
+    const h = await headers();
+    ({ insertedId } = await db.collection('user_record').insertOne({
+      name: `${v.firstName} ${v.lastName}`,
       firstName: v.firstName,
       lastName: v.lastName,
       dateOfBirth: v.dateOfBirth,
       country: v.country,
-      email: v.email,
-      emailVerifiedAt: now,
-      passwordHash: await bcrypt.hash(v.password, 10),
-      phone: v.phone,
-      partnerCode: v.partnerCode || null,
       nationality: v.nationality,
-      idType: v.idType,
-      idLastName: v.idLastName,
-      idFirstName: v.idFirstName,
-      idNumberEncrypted: encryptField(v.idNumber),
-      poaCountry: v.poaCountry,
-      postalCode: v.postalCode,
-      address: v.address,
-      proofDate: v.proofDate || null,
-      education: v.education,
-      employment: v.employment,
-      industry: v.industry,
-      industryOther: v.industry === 'Other' ? v.industryOther : null,
-      occupation: v.occupation,
-      occupationOther: v.occupation === 'Other' ? v.occupationOther : null,
-      employer: v.employer || null,
-      previousEmployment: v.previousEmployment || null,
-      experienceYears: v.experienceYears,
-      income: v.income,
-      sourceOfFunds: v.sourceOfFunds,
-      investmentExperience: v.investmentExperience,
-      marketExperience: v.marketExperience,
-      usCitizen: v.usCitizen,
-      tinEncrypted: v.tin ? encryptField(v.tin) : null,
-      pep: v.pep ? 1 : 0,
-      // what was signed and when (the checkbox text is the same for both, see AGREEMENT_TEXT)
-      agreements: JSON.stringify(
-        BRAND.agreements.map((a, i) => ({ title: a.title, url: a.url || null, accepted: Boolean(v[`agreement${i + 1}`]), acceptedAt: now.toISOString() }))
-      )
-    };
-    const cols = Object.keys(row);
-    const insert = `INSERT INTO client_applications (applicationReference, ${cols.join(', ')}) VALUES (?, ${cols.map(() => '?').join(', ')})`;
+      partnerCode: v.partnerCode,
+      accountType: v.accountType,
+      kyc: {
+        identity: {
+          documentType: v.idType,
+          firstName: v.idFirstName,
+          lastName: v.idLastName,
+          idNumber: v.idNumber,
+          nationality: v.nationality,
+          frontFileId: new ObjectId(v.idFront),
+          backFileId: wanted.includes('idBack') ? new ObjectId(v.idBack) : null
+        },
+        address: { country: v.poaCountry, postalCode: v.postalCode, address: v.address, proofDate: v.proofDate || null, fileId: new ObjectId(v.poaFile) },
+        questionnaire: {
+          education: v.education,
+          employment: v.employment,
+          industry: v.industry === 'Other' ? `Other: ${v.industryOther}` : v.industry,
+          occupation: v.occupation === 'Other' ? `Other: ${v.occupationOther}` : v.occupation,
+          employer: v.employer,
+          previousEmployment: v.previousEmployment,
+          experienceYears: v.experienceYears,
+          annualIncome: v.income,
+          sourceOfFunds: v.sourceOfFunds,
+          investmentExperience: v.investmentExperience,
+          marketExperience: v.marketExperience,
+          usCitizen: v.usCitizen === 'Yes',
+          tin: v.tin,
+          pepDeclarationAccepted: true
+        },
+        agreements: {
+          clientAgreement1: { accepted: true, acceptedAt: now },
+          clientAgreement2: { accepted: true, acceptedAt: now },
+          ...(corporate ? { corporateAgreement1: { accepted: true, acceptedAt: now } } : {})
+        },
+        ...(corporate
+          ? {
+              company: {
+                name: v.companyName,
+                registrationNumber: v.regNumber,
+                registrationDate: v.regDate,
+                registrationCountry: v.regCountry,
+                registrationCity: v.regCity,
+                postalCode: v.regPostalCode,
+                registrationAddress: v.regAddress,
+                secondaryPhone: v.secondaryPhone || null,
+                authorisedPerson: {
+                  name: v.repName,
+                  passport: v.repPassport,
+                  nationality: v.repNationality,
+                  shareholdingRatio: Number(v.repRatio),
+                  residentialAddress: v.repAddress,
+                  email: v.repEmail,
+                  phone: v.repPhone,
+                  occupation: v.repOccupation
+                },
+                shareholders: v.shareholders.map((x) => ({ ...x, ratio: Number(x.ratio) }))
+              },
+              license: { companyName: v.licenseCompanyName, registrationNumber: v.licenseRegNumber, fileId: new ObjectId(v.licenseFile) }
+            }
+          : {}),
+        status: 'submitted',
+        submittedAt: now
+      },
+      applicationStatus: 'submitted',
+      source: 'web-application',
+      ip: (h.get('x-forwarded-for') ?? h.get('x-real-ip') ?? '').split(',')[0].trim(),
+      userAgent: (h.get('user-agent') ?? '').slice(0, 300),
+      createdAt: now
+    }));
 
-    // a clash on the random reference is very unlikely; try a new one a few times
-    for (let attempt = 0; ; attempt++) {
-      reference = newReference();
-      try {
-        ({ insertId: id } = await query(insert, [reference, ...Object.values(row)]));
-        break;
-      } catch (err) {
-        if (isDuplicate(err) && /applicationReference|_reference/.test(err.sqlMessage ?? '') && attempt < 4) continue;
-        throw err;
-      }
+    // the files now belong to the client (shown with their documents; docType as Sumsub names it)
+    const userId = String(insertedId);
+    for (const k of wanted) {
+      const { docType, side } = FILE_FIELDS[k];
+      await files(db).updateOne(
+        { _id: new ObjectId(v[k]) },
+        { $set: { 'metadata.userId': userId, 'metadata.docType': docType ?? v.idType, ...(side ? { 'metadata.side': side } : {}) }, $unset: { 'metadata.draftId': '' } }
+      );
     }
   } catch (err) {
-    // two submissions with the same e-mail at once: the unique key on email lets only one through
-    if (isDuplicate(err)) return { step: 0, errors: { email: TAKEN } };
     console.error('[application] submit:', err);
     return { error: 'We could not save your application. Please try again.' };
   }
+  const userId = String(insertedId);
 
   // signed in from here on: the identity verification that follows (actions/verification.js) is tied to this client
-  await createSession({ id: String(id), name: `${v.firstName} ${v.lastName}` });
+  await createSession({ id: userId, name: `${v.firstName} ${v.lastName}` });
 
-  // confirmation e-mail; a failure doesn't undo the application
-  await sendMail({ to: v.email, ...applicationReceivedEmail({ name: v.firstName, reference }) }).catch((err) =>
-    console.error(`[application] confirmation e-mail for ${reference}:`, err.message)
-  );
+  const reference = userId.slice(-8).toUpperCase();
+  await db.collection('user_record').updateOne({ _id: insertedId }, { $set: { applicationReference: reference } }).catch(() => {});
 
-  return { ok: true, email: v.email, reference };
+  return { ok: true, reference };
 }
