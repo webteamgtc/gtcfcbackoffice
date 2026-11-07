@@ -1,24 +1,25 @@
 'use server';
 
-import { Readable } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
-import { headers } from 'next/headers';
-import { GridFSBucket, ObjectId } from 'mongodb';
-import { getDb } from '@/lib/mongodb';
+import { randomBytes } from 'node:crypto';
+import { isDuplicate, query, queryOne } from '@/lib/db';
+import { encryptField } from '@/lib/fieldCrypto';
 import { createSession } from '@/lib/session';
-import { DOCUMENTS_BUCKET } from '@/lib/user';
 import { phoneKey, verifyOtp } from '@/lib/otpStore';
-import { FILE_FIELDS, STEPS, e164, emailError, firstStepWithError, fullPhone, isCorporate, needsBackSide, readApplication, showsStep, validateAll, validateStep } from '@/lib/application';
+import { BRAND } from '@/lib/brand';
+import { FILE_FIELDS, STEPS, e164, emailError, firstStepWithError, isCorporate, needsBackSide, readApplication, showsStep, validateAll, validateStep } from '@/lib/application';
+
 
 /**
- * Client application, the KYC journey (src/app/components/LiveApplicationForm.jsx, fields in src/lib/application.js):
+ * Client application, the KYC journey (src/app/components/LiveApplicationForm.jsx, fields in src/lib/application.js).
+ * Saved in MySQL (Alibaba Cloud RDS, src/lib/db.js; tables in db/schema.sql, `npm run db:migrate`):
  *   emailAvailable        → is the e-mail still free? (was used before sending an e-mail code; that code is switched off)
  *   checkContact          → "Contact details" step: e-mail free, and the WhatsApp code correct (not used up yet)
- *   uploadApplicationFile → steps 2 and 3: stores one picked file (ID front / back, proof of address) in GridFS under the
- *                           form's draft id, before the client exists; picking again replaces it. → { ok, id } / { error }
- *   submitApplication     → last step: validates every step and that the uploaded files are there, saves the client to
- *                           `user_record` (answers under `kyc`; a corporate client also `kyc.company`, `kyc.license`
- *                           and the corporate agreement), links the files to the client, and signs the client in
+ *   uploadApplicationFile → stores one picked file (business license; ID photos / proof of address when those steps are
+ *                           shown) in `application_files` under the form's draft id, before the client exists; picking
+ *                           again replaces it. → { ok, id } / { error }
+ *   submitApplication     → last step: validates every step and that the uploaded files are there, inserts one row of
+ *                           `client_applications` (ID number and TIN encrypted; columns of steps Sumsub collects stay
+ *                           empty; a corporate client also `company`), links the files to it, and signs the client in
  *                           (session cookie) for the Sumsub verification that follows. Uses up the WhatsApp code, so the
  *                           mobile saved is the one the client proved they own.
  *                           → { ok, reference } or { step (0-based), errors } / { error }
@@ -29,15 +30,17 @@ const MAX_BYTES = 4 * 1024 * 1024;
 const ALLOWED_TYPES = ['application/pdf', 'image/jpeg', 'image/png'];
 const DRAFT_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-const files = (db) => db.collection(`${DOCUMENTS_BUCKET}.files`);
-
 const STEP_INDEX = Object.fromEntries(STEPS.map((x, i) => [x.key, i]));
 const TAKEN = 'An application with this email already exists.';
 const CODE_ERRORS = {
   email: { invalid: 'That code is not correct. Please check the email we sent you.', expired: 'This code has expired. Please request a new one.' },
   phone: { invalid: 'That code is not correct. Please check the WhatsApp message we sent you.', expired: 'This code has expired. Please request a new one.' }
 };
-const emailTaken = async (db, email) => Boolean(await db.collection('user_record').findOne({ email }, { projection: { _id: 1 } }));
+const emailTaken = async (email) => Boolean(await queryOne('SELECT id FROM client_applications WHERE email = ?', [email]));
+
+// e.g. "GTC-7K2M9QXA": 8 characters without look-alikes (0/O, 1/I/L), random so references don't reveal volumes
+const REF_CHARS = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
+const newReference = () => `GTC-${Array.from(randomBytes(8), (b) => REF_CHARS[b % REF_CHARS.length]).join('')}`;
 
 /**
  * Checks the WhatsApp code of the contact step against its signed token (src/lib/otpStore.js, no database).
@@ -58,7 +61,7 @@ export async function emailAvailable(email) {
   const bad = emailError(email);
   if (bad) return { error: bad };
   try {
-    return (await emailTaken(await getDb(), email)) ? { error: TAKEN } : { ok: true };
+    return (await emailTaken(email)) ? { error: TAKEN } : { ok: true };
   } catch (err) {
     console.error('[application] email check:', err);
     return { error: 'Could not reach the server. Please try again.' };
@@ -70,7 +73,7 @@ export async function checkContact(input) {
   const errors = validateStep('contact', v);
   if (Object.keys(errors).length) return { errors };
   try {
-    if (await emailTaken(await getDb(), v.email)) return { errors: { email: TAKEN } };
+    if (await emailTaken(v.email)) return { errors: { email: TAKEN } };
     const codeErrors = await checkCodes(v, false);
     return Object.keys(codeErrors).length ? { errors: codeErrors } : { ok: true };
   } catch (err) {
@@ -90,17 +93,13 @@ export async function uploadApplicationFile(formData) {
   if (file.size > MAX_BYTES) return { error: 'The file is too large. Please use a file of 4 MB or less.' };
 
   try {
-    const db = await getDb();
-    const bucket = new GridFSBucket(db, { bucketName: DOCUMENTS_BUCKET });
     // replace an earlier upload for the same field of this (not yet submitted) application
-    const old = await files(db).find({ 'metadata.draftId': draftId, 'metadata.field': field, 'metadata.userId': { $exists: false } }, { projection: { _id: 1 } }).toArray();
-    for (const f of old) await bucket.delete(f._id).catch(() => {});
-
-    const upload = bucket.openUploadStream(file.name, {
-      metadata: { draftId, field, contentType: file.type, source: 'web-application', sumsubStatus: 'pending', uploadedAt: new Date() }
-    });
-    await pipeline(Readable.fromWeb(file.stream()), upload);
-    return { ok: true, id: String(upload.id) };
+    await query('DELETE FROM application_files WHERE draft_id = ? AND field = ? AND application_id IS NULL', [draftId, field]);
+    const { insertId } = await query(
+      'INSERT INTO application_files (draft_id, field, filename, content_type, size, content) VALUES (?, ?, ?, ?, ?, ?)',
+      [draftId, field, file.name.slice(0, 255), file.type, file.size, Buffer.from(await file.arrayBuffer())]
+    );
+    return { ok: true, id: String(insertId) };
   } catch (err) {
     console.error('[application] upload:', err);
     return { error: 'Upload failed. Please try again.' };
@@ -113,146 +112,135 @@ export async function submitApplication(input) {
   if (Object.keys(errors).length) return { step: firstStepWithError(errors), errors };
   if (!DRAFT_RE.test(v.draftId)) return { error: 'Please reload the page and try again.' };
 
-  let db;
-  let insertedId;
   const now = new Date();
   const corporate = isCorporate(v);
+  const shows = (key) => showsStep(v, key);
   // only the uploads of the steps this client was shown (steps Sumsub collects are hidden, see HIDDEN_STEPS)
-  const wanted = Object.keys(FILE_FIELDS).filter((k) => showsStep(v, FILE_FIELDS[k].step) && (k !== 'idBack' || needsBackSide(v.idType)));
+  const wanted = Object.keys(FILE_FIELDS).filter((k) => shows(FILE_FIELDS[k].step) && (k !== 'idBack' || needsBackSide(v.idType)));
+  let id;
+  let reference;
   try {
-    db = await getDb();
-
-    // the contact step: e-mail still free, both codes correct; they are used up here
+    // the contact step: e-mail still free, WhatsApp code correct; it is used up here
     const contactStep = STEP_INDEX.contact;
-    if (await emailTaken(db, v.email)) return { step: contactStep, errors: { email: TAKEN } };
+    if (await emailTaken(v.email)) return { step: contactStep, errors: { email: TAKEN } };
     const codeErrors = await checkCodes(v, true);
     if (Object.keys(codeErrors).length) return { step: contactStep, errors: codeErrors };
 
     // every uploaded file must still be there, belong to this draft and not to another client
     const missing = {};
     for (const k of wanted) {
-      const ok =
-        ObjectId.isValid(v[k]) &&
-        (await files(db).findOne({ _id: new ObjectId(v[k]), 'metadata.draftId': v.draftId, 'metadata.field': k, 'metadata.userId': { $exists: false } }, { projection: { _id: 1 } }));
+      const ok = /^\d+$/.test(v[k]) && (await queryOne('SELECT id FROM application_files WHERE id = ? AND draft_id = ? AND field = ? AND application_id IS NULL', [v[k], v.draftId, k]));
       if (!ok) missing[k] = `Please upload the ${FILE_FIELDS[k].label} again.`;
     }
     if (Object.keys(missing).length) return { step: firstStepWithError(missing), errors: missing };
 
-    const h = await headers();
-    ({ insertedId } = await db.collection('user_record').insertOne({
-      name: `${v.firstName} ${v.lastName}`,
+    const identity = shows('identity');
+    const address = shows('address');
+    const questionnaire = shows('questionnaire');
+    const agreedAt = now.toISOString();
+    const row = {
+      // 2.1 personal information
+      accountType: v.accountType,
       firstName: v.firstName,
       lastName: v.lastName,
       dateOfBirth: v.dateOfBirth,
       country: v.country,
       nationality: v.nationality,
+      partnerCode: v.partnerCode || null,
+      // contact details (e-mail not verified: no e-mail code at the moment; the mobile is verified by WhatsApp)
       email: v.email,
-      emailVerified: false, // no e-mail code at the moment; only the mobile is verified
-      // emailVerifiedAt: now,
-      phone: fullPhone(v.phoneCountry, v.phone),
-      phoneVerified: true,
+      emailVerifiedAt: null,
+      passwordHash: null, // no password in the form yet
+      phone: v.phone,
+      phoneCountry: v.phoneCountry,
       phoneVerifiedAt: now,
-      partnerCode: v.partnerCode,
-      accountType: v.accountType,
-      kyc: {
-        ...(showsStep(v, 'identity')
-          ? {
-              identity: {
-                documentType: v.idType,
-                firstName: v.idFirstName,
-                lastName: v.idLastName,
-                idNumber: v.idNumber,
-                nationality: v.nationality,
-                frontFileId: new ObjectId(v.idFront),
-                backFileId: wanted.includes('idBack') ? new ObjectId(v.idBack) : null
-              }
-            }
-          : { identity: { idNumber: v.idNumber } }), // the contact step asks for the ID number; Sumsub collects the rest
-        ...(showsStep(v, 'address')
-          ? { address: { country: v.poaCountry, postalCode: v.postalCode, address: v.address, proofDate: v.proofDate || null, fileId: new ObjectId(v.poaFile) } }
-          : {}),
-        ...(showsStep(v, 'questionnaire')
-          ? {
-              questionnaire: {
-                education: v.education,
-                employment: v.employment,
-                industry: v.industry === 'Other' ? `Other: ${v.industryOther}` : v.industry,
-                occupation: v.occupation === 'Other' ? `Other: ${v.occupationOther}` : v.occupation,
-                employer: v.employer,
-                previousEmployment: v.previousEmployment,
-                experienceYears: v.experienceYears,
-                annualIncome: v.income,
-                sourceOfFunds: v.sourceOfFunds,
-                investmentExperience: v.investmentExperience,
-                marketExperience: v.marketExperience,
-                usCitizen: v.usCitizen === 'Yes',
-                tin: v.tin,
-                pepDeclarationAccepted: true
-              }
-            }
-          : {}),
-        collectedBySumsub: ['identity', 'address', 'questionnaire'].filter((k) => !showsStep(v, k)),
-        agreements: {
-          clientAgreement1: { accepted: true, acceptedAt: now },
-          clientAgreement2: { accepted: true, acceptedAt: now },
-          ...(corporate ? { corporateAgreement1: { accepted: true, acceptedAt: now } } : {})
-        },
-        ...(corporate
-          ? {
-              company: {
-                name: v.companyName,
-                registrationNumber: v.regNumber,
-                registrationDate: v.regDate,
-                registrationCountry: v.regCountry,
-                registrationCity: v.regCity,
-                postalCode: v.regPostalCode,
-                registrationAddress: v.regAddress,
-                secondaryPhone: v.secondaryPhone || null,
-                authorisedPerson: {
-                  name: v.repName,
-                  passport: v.repPassport,
-                  nationality: v.repNationality,
-                  shareholdingRatio: Number(v.repRatio),
-                  residentialAddress: v.repAddress,
-                  email: v.repEmail,
-                  phone: v.repPhone,
-                  occupation: v.repOccupation
-                },
-                shareholders: v.shareholders.map((x) => ({ ...x, ratio: Number(x.ratio) }))
-              },
-              license: { companyName: v.licenseCompanyName, registrationNumber: v.licenseRegNumber, fileId: new ObjectId(v.licenseFile) }
-            }
-          : {}),
-        status: 'submitted',
-        submittedAt: now
-      },
-      applicationStatus: 'submitted',
-      source: 'web-application',
-      ip: (h.get('x-forwarded-for') ?? h.get('x-real-ip') ?? '').split(',')[0].trim(),
-      userAgent: (h.get('user-agent') ?? '').slice(0, 300),
-      createdAt: now
-    }));
+      idNumberEncrypted: encryptField(v.idNumber),
+      // 2.2 identity: from the form when that step is shown, otherwise collected by Sumsub
+      idType: identity ? v.idType : null,
+      idFirstName: identity ? v.idFirstName : null,
+      idLastName: identity ? v.idLastName : null,
+      // 2.3 proof of address
+      poaCountry: address ? v.poaCountry : null,
+      postalCode: address ? v.postalCode : null,
+      address: address ? v.address : null,
+      proofDate: address ? v.proofDate || null : null,
+      // 2.4 questionnaire
+      education: questionnaire ? v.education : null,
+      employment: questionnaire ? v.employment : null,
+      industry: questionnaire ? v.industry : null,
+      industryOther: questionnaire && v.industry === 'Other' ? v.industryOther : null,
+      occupation: questionnaire ? v.occupation : null,
+      occupationOther: questionnaire && v.occupation === 'Other' ? v.occupationOther : null,
+      employer: questionnaire ? v.employer || null : null,
+      previousEmployment: questionnaire ? v.previousEmployment || null : null,
+      experienceYears: questionnaire ? v.experienceYears : null,
+      income: questionnaire ? v.income : null,
+      sourceOfFunds: questionnaire ? v.sourceOfFunds : null,
+      investmentExperience: questionnaire ? v.investmentExperience : null,
+      marketExperience: questionnaire ? v.marketExperience : null,
+      usCitizen: questionnaire ? v.usCitizen : null,
+      tinEncrypted: questionnaire && v.tin ? encryptField(v.tin) : null,
+      pep: questionnaire ? (v.pep ? 1 : 0) : null,
+      // 2.5 (and 2.8) what was signed and when
+      agreements: JSON.stringify([
+        ...BRAND.agreements.map((a, i) => ({ title: a.title, url: a.url || null, accepted: Boolean(v[`agreement${i + 1}`]), acceptedAt: agreedAt })),
+        ...(corporate ? [{ title: BRAND.corporateAgreement?.title ?? 'Client Agreement (Corporate)', url: BRAND.corporateAgreement?.url || null, accepted: true, acceptedAt: agreedAt }] : [])
+      ]),
+      // 2.6–2.7 corporate clients
+      company: corporate
+        ? JSON.stringify({
+            name: v.companyName,
+            registrationNumber: v.regNumber,
+            registrationDate: v.regDate,
+            registrationCountry: v.regCountry,
+            registrationCity: v.regCity,
+            postalCode: v.regPostalCode,
+            registrationAddress: v.regAddress,
+            secondaryPhone: v.secondaryPhone || null,
+            authorisedPerson: {
+              name: v.repName,
+              passport: v.repPassport,
+              nationality: v.repNationality,
+              shareholdingRatio: Number(v.repRatio),
+              residentialAddress: v.repAddress,
+              email: v.repEmail,
+              phone: v.repPhone,
+              occupation: v.repOccupation
+            },
+            shareholders: v.shareholders.map((x) => ({ ...x, ratio: Number(x.ratio) })),
+            license: { companyName: v.licenseCompanyName, registrationNumber: v.licenseRegNumber, fileId: v.licenseFile || null }
+          })
+        : null
+    };
+    const cols = Object.keys(row);
+    const insert = `INSERT INTO client_applications (applicationReference, ${cols.join(', ')}) VALUES (?, ${cols.map(() => '?').join(', ')})`;
 
-    // the files now belong to the client (shown with their documents; docType as Sumsub names it)
-    const userId = String(insertedId);
+    // a clash on the random reference is very unlikely; try a new one a few times
+    for (let attempt = 0; ; attempt++) {
+      reference = newReference();
+      try {
+        ({ insertId: id } = await query(insert, [reference, ...Object.values(row)]));
+        break;
+      } catch (err) {
+        if (isDuplicate(err) && /reference/i.test(err.sqlMessage ?? '') && attempt < 4) continue;
+        throw err;
+      }
+    }
+
+    // the files now belong to the client (document type as Sumsub names it; the ID photos use the chosen ID type)
     for (const k of wanted) {
       const { docType, side } = FILE_FIELDS[k];
-      await files(db).updateOne(
-        { _id: new ObjectId(v[k]) },
-        { $set: { 'metadata.userId': userId, 'metadata.docType': docType ?? v.idType, ...(side ? { 'metadata.side': side } : {}) }, $unset: { 'metadata.draftId': '' } }
-      );
+      await query('UPDATE application_files SET application_id = ?, doc_type = ?, side = ? WHERE id = ?', [id, docType ?? v.idType, side ?? null, v[k]]);
     }
   } catch (err) {
+    // two submissions with the same e-mail at once: the unique key on email lets only one through
+    if (isDuplicate(err)) return { step: STEP_INDEX.contact, errors: { email: TAKEN } };
     console.error('[application] submit:', err);
     return { error: 'We could not save your application. Please try again.' };
   }
-  const userId = String(insertedId);
 
   // signed in from here on: the identity verification that follows (actions/verification.js) is tied to this client
-  await createSession({ id: userId, name: `${v.firstName} ${v.lastName}` });
-
-  const reference = userId.slice(-8).toUpperCase();
-  await db.collection('user_record').updateOne({ _id: insertedId }, { $set: { applicationReference: reference } }).catch(() => {});
+  await createSession({ id: String(id), name: `${v.firstName} ${v.lastName}` });
 
   return { ok: true, reference };
 }

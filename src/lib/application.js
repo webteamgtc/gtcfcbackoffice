@@ -2,7 +2,7 @@
 // the document: sections 2.1–2.5 for every client, plus a "Contact details" step after 2.1 (email, mobile verified with
 // a WhatsApp code, and the ID number), plus 2.6–2.8 (company, business licence, corporate agreement) when the
 // client picks the Corporate account type in step 1. 2.2–2.4 are hidden for now (HIDDEN_STEPS): Sumsub collects them. The ID photos (front, back) and the proof of address file are uploaded in
-// steps 2 and 3 (actions/application.js → uploadApplicationFile, stored in GridFS); the form keeps their file ids.
+// steps 2 and 3 (actions/application.js → uploadApplicationFile, stored in MySQL application_files); the form keeps their file ids.
 // Sumsub still runs after submission (src/app/components/SumsubVerification.jsx).
 // Field lists, options and rules shared by the form and the server actions. Pure, so the client form can use it too.
 import { countryByCode } from '@/lib/countries';
