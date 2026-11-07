@@ -4,6 +4,10 @@
  * Client application: the personal KYC journey from "Current KYC Journey in MAX CRM" (public/…-form.docx), five steps,
  * with exactly the fields of the document:
  *   1. Personal Information: surname, given name, date of birth, country of residence, nationality.
+ *   Contact details (after 1): email, mobile verified with a 6-digit WhatsApp code (Infobip, POST /api/send-phone-otp),
+ *   and the ID number. The send route returns a signed token (no database) that goes back with the code; Continue checks
+ *   it on the server (checkContact), submit uses it up, so only a verified mobile is saved. (An e-mail code via
+ *   POST /api/otp-smtp is built in but switched off: see the commented lines.)
  *   2. Identity Information: nationality, document type, front and back photo, name and number as on the document.
  *   3. Proof of Address: utility bill / bank statement file, country, postal code, address, proof date.
  *   Files upload as soon as they are picked (uploadApplicationFile; large photos are shrunk first) and are linked to the
@@ -22,12 +26,12 @@ import { useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import dynamic from 'next/dynamic';
 import { AnimatePresence, MotionConfig, motion, useSpring, useTransform } from 'motion/react';
 import Logo from './Logo';
-import { submitApplication, uploadApplicationFile } from '@/app/actions/application';
+import { checkContact, emailAvailable, submitApplication, uploadApplicationFile } from '@/app/actions/application';
 import {
-  AGREEMENT_TEXT, EMPTY_APPLICATION, EMPTY_SHAREHOLDER, ID_TYPES, MAX_SHAREHOLDERS, OPTIONS, PEP_TEXT, STEPS, STEP_FIELDS, firstStepWithError, isCorporate, needsBackSide, stepsFor,
+  AGREEMENT_TEXT, EMPTY_APPLICATION, EMPTY_SHAREHOLDER, e164, ID_TYPES, MAX_SHAREHOLDERS, OPTIONS, PEP_TEXT, STEPS, STEP_FIELDS, firstStepWithError, isCorporate, needsBackSide, stepsFor,
   validateAll, validateStep
 } from '@/lib/application';
-import { COUNTRIES, DEFAULT_COUNTRY } from '@/lib/countries';
+import { COUNTRIES, DEFAULT_COUNTRY, countryByCode } from '@/lib/countries';
 import { DOC_LABELS } from '@/lib/kyc';
 import { BRAND } from '@/lib/brand';
 import SumsubVerification from './SumsubVerification';
@@ -42,11 +46,12 @@ import {
 
 const ACCEPT = '.pdf,.jpg,.jpeg,.png';
 const MAX_BYTES = 4 * 1024 * 1024; // per file, after shrinking (server: actions/application.js)
+const RESEND_SECONDS = 60; // matches the one-minute limit of src/lib/otpStore.js
 const COUNTRY_OPTIONS = COUNTRIES.map((c) => ({ value: c.code, label: c.name }));
 const asOptions = (list) => list.map((o) => ({ value: o, label: o }));
 const today = () => new Date().toISOString().slice(0, 10);
 
-const STEP_ICONS = [UserIcon, IdCardIcon, HomeIcon, BriefcaseIcon, PenIcon, BuildingIcon, FileIcon, PenIcon];
+const STEP_ICONS = [UserIcon, MailIcon, IdCardIcon, HomeIcon, BriefcaseIcon, PenIcon, BuildingIcon, FileIcon, PenIcon];
 
 /**
  * What the client sees, one screen at a time. The questionnaire (step 4) is split into three parts; each part checks
@@ -54,29 +59,33 @@ const STEP_ICONS = [UserIcon, IdCardIcon, HomeIcon, BriefcaseIcon, PenIcon, Buil
  */
 const SCREENS = [
   { step: 0, Icon: UserIcon, minutes: 1, title: 'Personal information', text: 'Use your name exactly as it appears on your identity document.', cheer: 'Let’s get started' },
-  { step: 1, Icon: IdCardIcon, minutes: 2, title: 'Identity information', text: 'Upload clear photos of your document and enter the details exactly as they appear on it.', cheer: 'Nice start' },
-  { step: 2, Icon: HomeIcon, minutes: 2, title: 'Proof of address', text: 'Upload a recent utility bill or bank statement and enter the address shown on it.', cheer: 'Almost halfway' },
   {
-    step: 3, part: 0, Icon: BriefcaseIcon, minutes: 1, title: 'Work and education', text: 'A few questions about your background, as required by our compliance obligations.', cheer: 'Halfway there',
+    step: 1, Icon: MailIcon, minutes: 2, title: 'Contact details',
+    text: 'Enter your email, verify your mobile number with the code we send on WhatsApp, and add your ID number.', cheer: 'Nice start'
+  },
+  { step: 2, Icon: IdCardIcon, minutes: 2, title: 'Identity information', text: 'Upload clear photos of your document and enter the details exactly as they appear on it.', cheer: 'Nice start' },
+  { step: 3, Icon: HomeIcon, minutes: 2, title: 'Proof of address', text: 'Upload a recent utility bill or bank statement and enter the address shown on it.', cheer: 'Almost halfway' },
+  {
+    step: 4, part: 0, Icon: BriefcaseIcon, minutes: 1, title: 'Work and education', text: 'A few questions about your background, as required by our compliance obligations.', cheer: 'Halfway there',
     fields: ['education', 'employment', 'industry', 'industryOther', 'occupation', 'occupationOther', 'employer', 'previousEmployment']
   },
-  { step: 3, part: 1, Icon: WalletIcon, minutes: 1, title: 'Income and funds', text: 'Choose the options that describe you best.', cheer: 'Keep going', fields: ['experienceYears', 'income', 'sourceOfFunds'] },
+  { step: 4, part: 1, Icon: WalletIcon, minutes: 1, title: 'Income and funds', text: 'Choose the options that describe you best.', cheer: 'Keep going', fields: ['experienceYears', 'income', 'sourceOfFunds'] },
   {
-    step: 3, part: 2, Icon: ChartIcon, minutes: 1, title: 'Experience and declarations', text: 'Your investment background and two short declarations.', cheer: 'Nearly done',
+    step: 4, part: 2, Icon: ChartIcon, minutes: 1, title: 'Experience and declarations', text: 'Your investment background and two short declarations.', cheer: 'Nearly done',
     fields: ['investmentExperience', 'marketExperience', 'usCitizen', 'tin', 'pep']
   },
-  { step: 4, Icon: PenIcon, minutes: 1, title: 'Client agreement', text: 'Please read the documents below and confirm to sign them electronically.', cheer: 'Almost there' },
+  { step: 5, Icon: PenIcon, minutes: 1, title: 'Client agreement', text: 'Please read the documents below and confirm to sign them electronically.', cheer: 'Almost there' },
   // corporate clients only (2.6–2.8)
   {
-    step: 5, part: 0, Icon: BuildingIcon, minutes: 2, title: 'Company details', text: 'The company exactly as it is registered.', cheer: 'Now your company',
+    step: 6, part: 0, Icon: BuildingIcon, minutes: 2, title: 'Company details', text: 'The company exactly as it is registered.', cheer: 'Now your company',
     fields: ['companyName', 'regNumber', 'regDate', 'regCountry', 'regCity', 'regPostalCode', 'regAddress', 'secondaryPhone']
   },
   {
-    step: 5, part: 1, Icon: UsersIcon, minutes: 2, title: 'Authorised person and shareholders', text: 'The person acting for the company, and any other shareholders.', cheer: 'Keep going',
+    step: 6, part: 1, Icon: UsersIcon, minutes: 2, title: 'Authorised person and shareholders', text: 'The person acting for the company, and any other shareholders.', cheer: 'Keep going',
     fields: ['repName', 'repPassport', 'repNationality', 'repRatio', 'repAddress', 'repEmail', 'repPhone', 'repOccupation', 'shareholders']
   },
-  { step: 6, Icon: FileIcon, minutes: 1, title: 'Business license', text: 'Upload the company’s trade or business license.', cheer: 'Nearly done' },
-  { step: 7, Icon: PenIcon, minutes: 1, title: 'Client agreement (corporate)', text: 'Please confirm to sign the agreement for the company electronically.', cheer: 'Last step' }
+  { step: 7, Icon: FileIcon, minutes: 1, title: 'Business license', text: 'Upload the company’s trade or business license.', cheer: 'Nearly done' },
+  { step: 8, Icon: PenIcon, minutes: 1, title: 'Client agreement (corporate)', text: 'Please confirm to sign the agreement for the company electronically.', cheer: 'Last step' }
 ];
 const partsOf = (step) => SCREENS.filter((s) => s.step === step).length;
 /** The screens of the steps this client goes through (hidden steps and, for individuals, corporate steps left out). */
@@ -640,6 +649,179 @@ export default function LiveApplicationForm() {
     );
   };
 
+  /* ---------------------------------------------------------------- contact details: WhatsApp code (e-mail code switched off) */
+
+  // per channel: sending (request in flight), sent (a code went out), cooldown (seconds before "Resend"), note (message)
+  const [codes, setCodes] = useState({ email: {}, phone: {} });
+  const setCode = (ch, patch) => setCodes((c) => ({ ...c, [ch]: { ...c[ch], ...patch } }));
+  const cooling = codes.email.cooldown > 0 || codes.phone.cooldown > 0;
+  useEffect(() => {
+    if (!cooling) return;
+    const t = setInterval(
+      () => setCodes((c) => Object.fromEntries(Object.entries(c).map(([ch, s]) => [ch, s.cooldown > 0 ? { ...s, cooldown: s.cooldown - 1 } : s]))),
+      1000
+    );
+    return () => clearInterval(t);
+  }, [cooling]);
+
+  // a new address / number needs a new code (and drops the token of the old one)
+  const changeContact = (k, value, ch) => {
+    setValue(k, value);
+    if (codes[ch].sent || codes[ch].note) setCode(ch, { sent: false, note: null });
+    if (values[`${ch}Code`]) setValue(`${ch}Code`, '');
+    if (values[`${ch}Token`]) setValue(`${ch}Token`, '');
+  };
+
+  const sendCode = async (ch) => {
+    const k = ch === 'email' ? 'email' : 'phone';
+    setTouched((t) => ({ ...t, [k]: true, ...(ch === 'phone' ? { phoneCountry: true } : {}) }));
+    const stepErrors = validateStep('contact', values);
+    if (stepErrors[k] || (ch === 'phone' && stepErrors.phoneCountry)) return;
+
+    setCode(ch, { sending: true, note: null });
+    let res;
+    try {
+      if (ch === 'email') {
+        const free = await emailAvailable(values.email);
+        if (!free?.ok) {
+          setCode(ch, { sending: false, note: { tone: 'bad', text: free?.error ?? 'We could not send the code. Please try again.' } });
+          return;
+        }
+      }
+      const r = await fetch(ch === 'email' ? '/api/otp-smtp' : '/api/send-phone-otp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(
+          ch === 'email'
+            ? { email: values.email.trim(), first_name: values.firstName.trim() }
+            : { phone: e164(values.phoneCountry, values.phone), locale: 'en' }
+        )
+      });
+      res = await r.json();
+    } catch {
+      res = null;
+    }
+    const where = ch === 'email' ? values.email.trim() : `+${e164(values.phoneCountry, values.phone).slice(1)}`;
+    if (res?.success) {
+      // the signed token goes back to the server with the code (src/lib/otpStore.js); it doesn't contain the code
+      setValue(`${ch}Token`, res.token ?? '');
+      setCode(ch, { sending: false, sent: true, cooldown: RESEND_SECONDS, note: { tone: 'ok', text: ch === 'email' ? `Code sent to ${where}. It expires in 10 minutes.` : `Code sent on WhatsApp to ${where}. It expires in 10 minutes.` } });
+      clearServer(k);
+      document.getElementById(`ap-${ch}Code`)?.focus();
+    } else if (res?.reason === 'wait') {
+      setCode(ch, { sending: false, cooldown: res.retryIn ?? RESEND_SECONDS, note: { tone: 'bad', text: 'A code was just sent. Please check it, or wait before requesting a new one.' } });
+    } else if (res?.reason === 'disposable') {
+      setCode(ch, { sending: false, note: { tone: 'bad', text: 'Please use a permanent email address, not a temporary one.' } });
+    } else {
+      setCode(ch, { sending: false, note: { tone: 'bad', text: res?.message && ch === 'phone' ? res.message : 'We could not send the code. Please try again.' } });
+    }
+  };
+
+  const sendButton = (ch) => {
+    const c = codes[ch];
+    return (
+      <button type="button" className="code-btn" onClick={() => sendCode(ch)} disabled={c.sending || c.cooldown > 0}>
+        {c.sending ? 'Sending…' : c.cooldown > 0 ? `Resend in ${c.cooldown}s` : c.sent ? 'Resend code' : ch === 'phone' ? 'Send on WhatsApp' : 'Send code'}
+      </button>
+    );
+  };
+
+  const codeField = (ch, label) => {
+    const k = `${ch}Code`;
+    return (
+      <Field id={`ap-${k}`} label={label} required error={err(k)}>
+        {control(
+          k,
+          <ShieldIcon />,
+          <input
+            id={`ap-${k}`}
+            value={values[k]}
+            onChange={(e) => setValue(k, e.target.value.replace(/\D/g, '').slice(0, 6))}
+            onBlur={blur(k)}
+            inputMode="numeric"
+            maxLength={6}
+            placeholder={codes[ch].sent ? '6-digit code' : 'Send the code first'}
+            autoComplete="one-time-code"
+            aria-invalid={Boolean(err(k))}
+          />
+        )}
+      </Field>
+    );
+  };
+
+  const note = (ch) =>
+    codes[ch].note && (
+      <p className={`note ${codes[ch].note.tone} apply-wide ap-pop`} role="status">
+        {codes[ch].note.tone === 'ok' ? <CheckIcon /> : <AlertIcon />} {codes[ch].note.text}
+      </p>
+    );
+
+  const phoneDial = countryByCode(values.phoneCountry)?.dial;
+  const contactFields = () => (
+    <div className="apply-grid">
+      <Field id="ap-email" label="Email" required error={err('email')} wide>
+        {control(
+          'email',
+          <MailIcon />,
+          <>
+            <input
+              id="ap-email"
+              type="email"
+              value={values.email}
+              onChange={(e) => changeContact('email', e.target.value, 'email')}
+              onBlur={blur('email')}
+              placeholder="you@example.com"
+              autoComplete="email"
+              aria-invalid={Boolean(err('email'))}
+            />
+            {/* e-mail code switched off (only the WhatsApp code is asked for): {sendButton('email')} */}
+          </>
+        )}
+      </Field>
+      {/* e-mail code switched off:
+      {codeField('email', 'Email verification code')}
+      {note('email')}
+      */}
+
+      <Field id="ap-phone" label="Mobile number (WhatsApp)" required error={err('phone') ?? err('phoneCountry')}>
+        <div className={`control${err('phone') || err('phoneCountry') ? ' is-bad' : ''}`} dir="ltr">
+          <span className="icon">
+            <PhoneIcon />
+          </span>
+          <span className="dial-pick">
+            <span aria-hidden="true">{phoneDial ? `+${phoneDial}` : 'Code'}</span>
+            <select aria-label="Country code" value={values.phoneCountry} onChange={(e) => changeContact('phoneCountry', e.target.value, 'phone')} onBlur={blur('phoneCountry')}>
+              <option value="" disabled>
+                Country code
+              </option>
+              {COUNTRIES.map((c) => (
+                <option key={c.code} value={c.code}>
+                  {c.name} (+{c.dial})
+                </option>
+              ))}
+            </select>
+          </span>
+          <input
+            id="ap-phone"
+            type="tel"
+            value={values.phone}
+            onChange={(e) => changeContact('phone', e.target.value.replace(/[^\d\s-]/g, '').slice(0, 20), 'phone')}
+            onBlur={blur('phone')}
+            inputMode="tel"
+            placeholder="50 123 4567"
+            autoComplete="tel-national"
+            aria-invalid={Boolean(err('phone'))}
+          />
+          {sendButton('phone')}
+        </div>
+      </Field>
+      {codeField('phone', 'WhatsApp verification code')}
+      {note('phone')}
+
+      {textField('idNumber', 'ID number', { icon: <IdCardIcon />, placeholder: 'Passport or national ID number', autoComplete: 'off', hint: 'As shown on the identity document you will verify with.' })}
+    </div>
+  );
+
   /* ---------------------------------------------------------------- actions */
 
   const next = (e) => {
@@ -658,10 +840,31 @@ export default function LiveApplicationForm() {
       return;
     }
 
-    // after step 1, the proof of address country starts as the country of residence;
+    // contact details: the server checks the e-mail is free and both codes are right before the client moves on
+    if (key === 'contact') {
+      startTransition(async () => {
+        let res;
+        try {
+          res = await checkContact(values);
+        } catch {
+          res = { error: 'Could not reach the server. Please check your connection and try again.' };
+        }
+        if (res?.ok) {
+          setServerErrors({});
+          go(screen + 1);
+        } else {
+          setServerErrors(res?.errors ?? {});
+          if (res?.error) setAlert(res.error);
+          setShake((n) => n + 1);
+        }
+      });
+      return;
+    }
+
+    // after step 1, the proof of address country and the mobile's country code start as the country of residence;
     // the business license starts with the company name and number from the company details
-    if (screen === 0) setValues((v) => ({ ...v, poaCountry: v.poaCountry || v.country }));
-    if (screens[screen + 1]?.step === 6) setValues((v) => ({ ...v, licenseCompanyName: v.licenseCompanyName || v.companyName, licenseRegNumber: v.licenseRegNumber || v.regNumber }));
+    if (screen === 0) setValues((v) => ({ ...v, poaCountry: v.poaCountry || v.country, phoneCountry: v.phoneCountry || v.country }));
+    if (screens[screen + 1]?.step === STEPS.findIndex((x) => x.key === 'license')) setValues((v) => ({ ...v, licenseCompanyName: v.licenseCompanyName || v.companyName, licenseRegNumber: v.licenseRegNumber || v.regNumber }));
     if (!last) return go(screen + 1);
 
     startTransition(async () => {
@@ -754,6 +957,8 @@ export default function LiveApplicationForm() {
           </div>
         );
       case 1:
+        return contactFields();
+      case 2:
         return (
           <div className="apply-grid">
             {selectField('nationality', 'Nationality', COUNTRY_OPTIONS, { icon: <GlobeIcon />, placeholder: 'Choose a country' })}
@@ -781,7 +986,7 @@ export default function LiveApplicationForm() {
             {textField('idNumber', 'ID number', { icon: <IdCardIcon />, placeholder: 'Document number', autoComplete: 'off' })}
           </div>
         );
-      case 2:
+      case 3:
         return (
           <div className="apply-grid">
             {fileField('poaFile', 'Utilities & bank statements', { wide: true, hint: 'A utility bill or bank statement from the last 3 months showing your name and address · JPG, PNG or PDF' })}
@@ -805,7 +1010,7 @@ export default function LiveApplicationForm() {
             {dateField('proofDate', 'Proof date', { optional: true, hint: 'The date printed on the document.' })}
           </div>
         );
-      case 3:
+      case 4:
         return (
           <div className="apply-grid">
             {selectField('education', 'Educational level', asOptions(OPTIONS.education))}
@@ -818,7 +1023,7 @@ export default function LiveApplicationForm() {
             {textField('previousEmployment', 'Previous employment', { optional: true, placeholder: 'Previous employer or role' })}
           </div>
         );
-      case 4:
+      case 5:
         return (
           <div className="apply-grid">
             {choiceField('experienceYears', 'Years of working experience', asOptions(OPTIONS.experienceYears), { cols: 5 })}
@@ -826,7 +1031,7 @@ export default function LiveApplicationForm() {
             {selectField('sourceOfFunds', 'What is the source of your funds / wealth?', asOptions(OPTIONS.sourceOfFunds), { wide: true })}
           </div>
         );
-      case 5:
+      case 6:
         return (
           <div className="apply-grid">
             {choiceField('investmentExperience', 'Investment experience', asOptions(OPTIONS.investmentExperience), { cols: 4 })}
@@ -836,12 +1041,12 @@ export default function LiveApplicationForm() {
             {declareField('pep', 'Politically Exposed Person (PEP)', PEP_TEXT)}
           </div>
         );
-      case 6:
+      case 7:
         return signingField(
           BRAND.agreements.map((a, i) => ({ k: `agreement${i + 1}`, title: a.title, url: a.url })),
           'By signing, you accept these documents electronically. Your signature is equivalent to a handwritten one.'
         );
-      case 7:
+      case 8:
         return (
           <div className="apply-grid">
             {textField('companyName', 'Company name', { icon: <BuildingIcon />, placeholder: 'As registered', autoComplete: 'organization', wide: true })}
@@ -866,7 +1071,7 @@ export default function LiveApplicationForm() {
             </Field>
           </div>
         );
-      case 8:
+      case 9:
         return (
           <div className="apply-grid">
             <p className="apply-section apply-wide">Authorised person</p>
@@ -884,7 +1089,7 @@ export default function LiveApplicationForm() {
             {shareholdersField()}
           </div>
         );
-      case 9:
+      case 10:
         return (
           <div className="apply-grid">
             {textField('licenseCompanyName', 'Company name', { icon: <BuildingIcon />, placeholder: 'As on the license' })}

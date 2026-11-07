@@ -306,3 +306,10 @@
   .signature-name { clip-path: none; }
   .ap-draw { stroke-dashoffset: 0; }
 }
+
+/* contact details: country code picker inside the mobile field (the native select sits invisibly over "+971") */
+.dial-pick { position: relative; display: inline-flex; align-items: center; gap: 4px; margin-inline-end: 8px; padding-inline-end: 10px; border-inline-end: 1px solid var(--line); font-size: 15px; font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.dial-pick::after { content: ''; width: 6px; height: 6px; margin-top: -3px; border: solid #8a909c; border-width: 0 1.5px 1.5px 0; transform: rotate(45deg); }
+.dial-pick select { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; font-size: 16px; }
+.dial-pick:has(select:focus-visible) { outline: 3px solid rgba(41, 59, 147, 0.35); outline-offset: 2px; border-radius: 6px; }
+.control .code-btn { margin-inline-start: 8px; }

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { clearOtp, createOtp } from '@/lib/otpStore';
+import { issueOtp, releaseOtp } from '@/lib/otpStore';
 import { validateBusinessEmail } from '@/lib/emailValidation';
 
 export const runtime = 'nodejs';
@@ -7,9 +7,10 @@ export const runtime = 'nodejs';
 const esc = (s = '') => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
 /**
- * POST { email, first_name? } → emails a 6-digit code (Mailgun). The code is stored server side (src/lib/otpStore.js)
- * and checked by the application form's server actions (verifyOtp) — it is never returned to the browser.
- * → { success: true } or { success: false, message, reason? } (reason 'wait' + retryIn seconds when asked again within a minute)
+ * POST { email, first_name? } → emails a 6-digit code (Mailgun). The response carries a signed token (src/lib/otpStore.js)
+ * that the form sends back with the code; the code itself is never returned to the browser. No database.
+ * (The application form doesn't ask for an e-mail code at the moment: only the WhatsApp code is used.)
+ * → { success: true, token } or { success: false, message, reason? } (reason 'wait' + retryIn seconds when asked again within a minute)
  * Without MAILGUN_API_KEY in development the code is printed to the server console instead of e-mailed.
  */
 export async function POST(req) {
@@ -21,16 +22,16 @@ export async function POST(req) {
     const check = validateBusinessEmail(email);
     if (!check.valid) return NextResponse.json({ success: false, reason: check.reason, message: 'Invalid email address' }, { status: 400 });
 
-    const created = await createOtp(email);
+    const created = await issueOtp(email);
     if (created.error === 'wait') {
       return NextResponse.json({ success: false, reason: 'wait', retryIn: created.retryIn, message: 'Please wait before requesting a new code' }, { status: 429 });
     }
-    const { otp } = created;
+    const { otp, token } = created;
 
     if (!process.env.MAILGUN_API_KEY) {
       if (process.env.NODE_ENV !== 'production') {
         console.warn(`[otp-smtp] MAILGUN_API_KEY not set — OTP for ${email}: ${otp}`);
-        return NextResponse.json({ success: true, message: 'OTP sent' });
+        return NextResponse.json({ success: true, message: 'OTP sent', token });
       }
       throw new Error('MAILGUN_API_KEY is not set');
     }
@@ -65,11 +66,11 @@ export async function POST(req) {
     // loaded here: the Mailgun client throws on import when MAILGUN_API_KEY is missing
     const { MAILGUN_DOMAIN, MAILGUN_FROM, mailgunClient } = await import('@/config/nodemailer');
     await mailgunClient.messages.create(MAILGUN_DOMAIN, { from: MAILGUN_FROM, to: email, subject: 'Your GTCFX OTP Code', text: `Your OTP is ${otp}`, html });
-    return NextResponse.json({ success: true, message: 'OTP sent' });
+    return NextResponse.json({ success: true, message: 'OTP sent', token });
   } catch (error) {
     console.error('OTP email error:', error?.message || error);
     // let the client ask again straight away instead of waiting out the one-minute limit
-    if (email) await clearOtp(email).catch(() => {});
+    if (email) releaseOtp(email);
     return NextResponse.json({ success: false, message: 'Error Sending OTP' }, { status: 500 });
   }
 }

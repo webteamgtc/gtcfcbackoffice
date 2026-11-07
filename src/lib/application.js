@@ -1,5 +1,6 @@
 // Client application (src/app/apply): the KYC journey from "Current KYC Journey in MAX CRM", with exactly the fields of
-// the document: sections 2.1–2.5 for every client, plus 2.6–2.8 (company, business licence, corporate agreement) when the
+// the document: sections 2.1–2.5 for every client, plus a "Contact details" step after 2.1 (email, mobile verified with
+// a WhatsApp code, and the ID number), plus 2.6–2.8 (company, business licence, corporate agreement) when the
 // client picks the Corporate account type in step 1. 2.2–2.4 are hidden for now (HIDDEN_STEPS): Sumsub collects them. The ID photos (front, back) and the proof of address file are uploaded in
 // steps 2 and 3 (actions/application.js → uploadApplicationFile, stored in GridFS); the form keeps their file ids.
 // Sumsub still runs after submission (src/app/components/SumsubVerification.jsx).
@@ -10,9 +11,10 @@ export const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const LETTERS_RE = /^[\p{L}\p{M}\s'’.-]+$/u;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-// corporate steps come last, so an individual's steps are the first five of the list
+// corporate steps come last, so an individual's steps are the first six of the list
 export const STEPS = [
   { key: 'personal', title: 'Personal Information' },
+  { key: 'contact', title: 'Contact Details' }, // email + mobile, each verified with a code, and the ID number
   { key: 'identity', title: 'Identity Information' },
   { key: 'address', title: 'Proof of Address' },
   { key: 'questionnaire', title: 'Questionnaire' },
@@ -112,6 +114,13 @@ export const EMPTY_APPLICATION = {
   nationality: '',
   partnerCode: '', // from the link (?code, ?ref, …), not shown
   draftId: '', // groups the files uploaded before the application is saved
+  // contact details: the mobile is verified with a WhatsApp code (POST /api/send-phone-otp); the e-mail is not verified
+  email: '',
+  // emailCode: '', // e-mail code (POST /api/otp-smtp), switched off: only the WhatsApp code is asked for
+  phoneCountry: '', // dialling code of the mobile number, as a country code (starts as the country of residence)
+  phone: '', // national number
+  phoneCode: '',
+  phoneToken: '', // signed token returned with the WhatsApp code (src/lib/otpStore.js), sent back to be checked
   // 2.2 identity information (POI)
   idType: '',
   idFront: '', // uploaded file ids
@@ -175,6 +184,7 @@ export const EMPTY_APPLICATION = {
 // which step each field belongs to — the form marks a step's fields as touched on "Next"
 export const STEP_FIELDS = {
   personal: ['lastName', 'firstName', 'dateOfBirth', 'country', 'nationality'],
+  contact: ['email', /* 'emailCode', */ 'phoneCountry', 'phone', 'phoneCode', 'idNumber'],
   identity: ['nationality', 'idType', 'idFront', 'idBack', 'idLastName', 'idFirstName', 'idNumber'],
   address: ['poaFile', 'poaCountry', 'postalCode', 'address', 'proofDate'],
   questionnaire: [
@@ -193,7 +203,7 @@ export const STEP_FIELDS = {
 /** Index of the first step that has one of `errors`' fields (-1 when none). */
 export const firstStepWithError = (errors) => STEPS.findIndex((s) => STEP_FIELDS[s.key].some((k) => errors[k]));
 
-const LIMITS = { regAddress: 300, repAddress: 300, address: 300, idNumber: 40, postalCode: 20, tin: 40, employer: 120, previousEmployment: 120, industryOther: 120, occupationOther: 120 };
+const LIMITS = { phoneToken: 2000, regAddress: 300, repAddress: 300, address: 300, idNumber: 40, postalCode: 20, tin: 40, employer: 120, previousEmployment: 120, industryOther: 120, occupationOther: 120 };
 
 /** Trimmed copy of the values (from a plain object or FormData). */
 export function readApplication(src) {
@@ -205,7 +215,10 @@ export function readApplication(src) {
     else if (BOOLEANS.includes(k)) out[k] = raw === true || raw === 'true' || raw === 'on';
     else out[k] = String(raw ?? '').trim().slice(0, LIMITS[k] ?? 160);
   }
-  for (const k of ['country', 'nationality', 'poaCountry', 'regCountry', 'repNationality']) out[k] = out[k].slice(0, 2).toUpperCase();
+  for (const k of ['country', 'nationality', 'phoneCountry', 'poaCountry', 'regCountry', 'repNationality']) out[k] = out[k].slice(0, 2).toUpperCase();
+  out.email = out.email.toLowerCase();
+  out.phone = out.phone.replace(/\D/g, '').replace(/^0+/, ''); // national number without a leading trunk 0
+  out.phoneCode = out.phoneCode.replace(/\D/g, '').slice(0, 6); // (and emailCode, if switched back on)
   if (!ACCOUNT_TYPES.includes(out.accountType)) out.accountType = 'individual';
   for (const k of ['secondaryPhone', 'repPhone']) out[k] = out[k].replace(/[^\d+\s-]/g, '');
   out.repEmail = out.repEmail.toLowerCase();
@@ -273,6 +286,20 @@ export function validateStep(key, v) {
     else if (ageOn(v.dateOfBirth) > 120) e.dateOfBirth = 'Please check your date of birth.';
     if (!countryByCode(v.country)) e.country = 'Please choose your country of residence.';
     if (!countryByCode(v.nationality)) e.nationality = 'Please choose your nationality.';
+  }
+  if (key === 'contact') {
+    const mail = emailError(v.email);
+    if (mail) e.email = mail;
+    // e-mail code switched off (only the WhatsApp code is asked for):
+    // if (!/^\d{6}$/.test(v.emailCode)) e.emailCode = v.emailCode ? 'The code has 6 digits.' : 'Enter the 6-digit code we emailed you.';
+    if (!countryByCode(v.phoneCountry)) e.phoneCountry = 'Choose the country code.';
+    const digits = v.phone.replace(/\D/g, '');
+    if (!digits) e.phone = 'Please enter your mobile number.';
+    else if (digits.length < 5 || digits.length > 14) e.phone = 'Please enter a valid mobile number.';
+    if (!v.phoneToken) e.phoneCode = 'Send the code to your WhatsApp first.';
+    else if (!/^\d{6}$/.test(v.phoneCode)) e.phoneCode = v.phoneCode ? 'The code has 6 digits.' : 'Enter the 6-digit code we sent on WhatsApp.';
+    if (!v.idNumber.trim()) e.idNumber = 'Please enter your ID number.';
+    else if (!/^[A-Za-z0-9 -]{3,40}$/.test(v.idNumber.trim())) e.idNumber = 'Use letters, numbers and dashes only.';
   }
   if (key === 'identity') {
     if (!countryByCode(v.nationality)) e.nationality = 'Please choose your nationality.';
@@ -363,4 +390,10 @@ export function validateAll(v) {
 export function fullPhone(countryCode, phone) {
   const dial = countryByCode(countryCode)?.dial;
   return dial ? `+${dial} ${phone.replace(/\D/g, '')}` : phone;
+}
+
+/** The mobile number as WhatsApp / E.164 wants it, e.g. "+971501234567" (empty when the country code is unknown). */
+export function e164(countryCode, phone) {
+  const dial = countryByCode(countryCode)?.dial;
+  return dial ? `+${dial}${String(phone ?? '').replace(/\D/g, '').replace(/^0+/, '')}` : '';
 }
