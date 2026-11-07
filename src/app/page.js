@@ -25,7 +25,7 @@ export default async function Home() {
             <h1>
               Hello, <span className="cap">{user.firstName || fullName}</span>
             </h1>
-            <p className="hero-lead">{next.title}</p>
+            <p className="hero-lead">{next.title}</p> 
             <p className="hero-text">{next.text}</p>
             {next.req && (
               <a className="btn btn-gold" href={`#doc-${next.req.key}`}>
@@ -58,6 +58,8 @@ export default async function Home() {
         <div className="grid-2">
           <section className="panel">
             <div className="panel-head">
+
+
               <h2>Recent activity</h2>
             </div>
             <Activity documents={documents} />
