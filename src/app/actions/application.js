@@ -7,16 +7,20 @@ import { GridFSBucket, ObjectId } from 'mongodb';
 import { getDb } from '@/lib/mongodb';
 import { createSession } from '@/lib/session';
 import { DOCUMENTS_BUCKET } from '@/lib/user';
-import { FILE_FIELDS, firstStepWithError, isCorporate, needsBackSide, readApplication, showsStep, validateAll } from '@/lib/application';
+import { phoneKey, verifyOtp } from '@/lib/otpStore';
+import { FILE_FIELDS, STEPS, e164, emailError, firstStepWithError, fullPhone, isCorporate, needsBackSide, readApplication, showsStep, validateAll, validateStep } from '@/lib/application';
 
 /**
- * Client application, the five-step KYC journey (src/app/components/LiveApplicationForm.jsx, fields in src/lib/application.js):
+ * Client application, the KYC journey (src/app/components/LiveApplicationForm.jsx, fields in src/lib/application.js):
+ *   emailAvailable        → is the e-mail still free? (was used before sending an e-mail code; that code is switched off)
+ *   checkContact          → "Contact details" step: e-mail free, and the WhatsApp code correct (not used up yet)
  *   uploadApplicationFile → steps 2 and 3: stores one picked file (ID front / back, proof of address) in GridFS under the
  *                           form's draft id, before the client exists; picking again replaces it. → { ok, id } / { error }
  *   submitApplication     → last step: validates every step and that the uploaded files are there, saves the client to
  *                           `user_record` (answers under `kyc`; a corporate client also `kyc.company`, `kyc.license`
  *                           and the corporate agreement), links the files to the client, and signs the client in
- *                           (session cookie) for the Sumsub verification that follows.
+ *                           (session cookie) for the Sumsub verification that follows. Uses up the WhatsApp code, so the
+ *                           mobile saved is the one the client proved they own.
  *                           → { ok, reference } or { step (0-based), errors } / { error }
  */
 
@@ -26,6 +30,54 @@ const ALLOWED_TYPES = ['application/pdf', 'image/jpeg', 'image/png'];
 const DRAFT_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const files = (db) => db.collection(`${DOCUMENTS_BUCKET}.files`);
+
+const STEP_INDEX = Object.fromEntries(STEPS.map((x, i) => [x.key, i]));
+const TAKEN = 'An application with this email already exists.';
+const CODE_ERRORS = {
+  email: { invalid: 'That code is not correct. Please check the email we sent you.', expired: 'This code has expired. Please request a new one.' },
+  phone: { invalid: 'That code is not correct. Please check the WhatsApp message we sent you.', expired: 'This code has expired. Please request a new one.' }
+};
+const emailTaken = async (db, email) => Boolean(await db.collection('user_record').findOne({ email }, { projection: { _id: 1 } }));
+
+/**
+ * Checks the WhatsApp code of the contact step against its signed token (src/lib/otpStore.js, no database).
+ * `consume` uses the token up (only on submit). → field errors
+ */
+async function checkCodes(v, consume) {
+  const errors = {};
+  // e-mail code switched off (only the WhatsApp code is asked for); with it back on, the form also sends emailCode / emailToken:
+  // const mail = await verifyOtp(v.email, v.emailCode, v.emailToken, { consume });
+  // if (!mail.success) errors.emailCode = CODE_ERRORS.email[mail.reason];
+  const phone = await verifyOtp(phoneKey(e164(v.phoneCountry, v.phone)), v.phoneCode, v.phoneToken, { consume });
+  if (!phone.success) errors.phoneCode = CODE_ERRORS.phone[phone.reason];
+  return errors;
+}
+
+export async function emailAvailable(email) {
+  email = String(email ?? '').trim().toLowerCase();
+  const bad = emailError(email);
+  if (bad) return { error: bad };
+  try {
+    return (await emailTaken(await getDb(), email)) ? { error: TAKEN } : { ok: true };
+  } catch (err) {
+    console.error('[application] email check:', err);
+    return { error: 'Could not reach the server. Please try again.' };
+  }
+}
+
+export async function checkContact(input) {
+  const v = readApplication(input);
+  const errors = validateStep('contact', v);
+  if (Object.keys(errors).length) return { errors };
+  try {
+    if (await emailTaken(await getDb(), v.email)) return { errors: { email: TAKEN } };
+    const codeErrors = await checkCodes(v, false);
+    return Object.keys(codeErrors).length ? { errors: codeErrors } : { ok: true };
+  } catch (err) {
+    console.error('[application] contact check:', err);
+    return { error: 'Could not reach the server. Please try again.' };
+  }
+}
 
 export async function uploadApplicationFile(formData) {
   const draftId = String(formData.get('draftId') ?? '');
@@ -70,6 +122,12 @@ export async function submitApplication(input) {
   try {
     db = await getDb();
 
+    // the contact step: e-mail still free, both codes correct; they are used up here
+    const contactStep = STEP_INDEX.contact;
+    if (await emailTaken(db, v.email)) return { step: contactStep, errors: { email: TAKEN } };
+    const codeErrors = await checkCodes(v, true);
+    if (Object.keys(codeErrors).length) return { step: contactStep, errors: codeErrors };
+
     // every uploaded file must still be there, belong to this draft and not to another client
     const missing = {};
     for (const k of wanted) {
@@ -88,6 +146,12 @@ export async function submitApplication(input) {
       dateOfBirth: v.dateOfBirth,
       country: v.country,
       nationality: v.nationality,
+      email: v.email,
+      emailVerified: false, // no e-mail code at the moment; only the mobile is verified
+      // emailVerifiedAt: now,
+      phone: fullPhone(v.phoneCountry, v.phone),
+      phoneVerified: true,
+      phoneVerifiedAt: now,
       partnerCode: v.partnerCode,
       accountType: v.accountType,
       kyc: {
@@ -103,7 +167,7 @@ export async function submitApplication(input) {
                 backFileId: wanted.includes('idBack') ? new ObjectId(v.idBack) : null
               }
             }
-          : {}),
+          : { identity: { idNumber: v.idNumber } }), // the contact step asks for the ID number; Sumsub collects the rest
         ...(showsStep(v, 'address')
           ? { address: { country: v.poaCountry, postalCode: v.postalCode, address: v.address, proofDate: v.proofDate || null, fileId: new ObjectId(v.poaFile) } }
           : {}),
