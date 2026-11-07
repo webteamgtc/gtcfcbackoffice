@@ -8,6 +8,7 @@ import { phoneKey, verifyOtp } from '@/lib/otpStore';
 import { BRAND } from '@/lib/brand';
 import { FILE_FIELDS, STEPS, e164, emailError, firstStepWithError, isCorporate, needsBackSide, readApplication, showsStep, validateAll, validateStep } from '@/lib/application';
 
+
 /**
  * Client application, the KYC journey (src/app/components/LiveApplicationForm.jsx, fields in src/lib/application.js).
  * Saved in MySQL (Alibaba Cloud RDS, src/lib/db.js; tables in db/schema.sql, `npm run db:migrate`):
