@@ -1189,6 +1189,14 @@ export default function LiveApplicationForm() {
         </motion.div>
       </AnimatePresence>
       {actions}
+      <ul className="ap-trust">
+        <li>
+          <LockIcon /> Encrypted and confidential
+        </li>
+        <li>
+          <CheckIcon /> Nothing is saved until you submit
+        </li>
+      </ul>
     </form>
   );
 
@@ -1307,6 +1315,18 @@ export default function LiveApplicationForm() {
           </div>
         </aside>
         <section className="ap-a-main" onPointerMove={spot}>
+          {/* decorative moving background behind the card (styles: apply.css, .ap-bg) */}
+          <div className="ap-bg" aria-hidden="true">
+            <i className="ap-blob b1" />
+            <i className="ap-blob b2" />
+            <i className="ap-blob b3" />
+            <span className="ap-orbit o1">
+              <b />
+            </span>
+            <span className="ap-orbit o2">
+              <b />
+            </span>
+          </div>
           {!done && (
             <div className="ap-a-mobile">
               {bar}
