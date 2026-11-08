@@ -9,7 +9,7 @@ export async function getCurrentUser() {
   if (!/^\d+$/.test(String(session?.userId ?? ''))) return null;
 
   const row = await queryOne(
-    `SELECT a.id, a.firstName, a.lastName, a.email, a.emailVerifiedAt, a.country, a.phone, a.phoneCountry, a.partnerCode, v.status AS verificationStatus
+    `SELECT a.id, a.firstName, a.lastName, a.email, a.emailVerifiedAt, a.country, a.phone, a.phoneCountry, a.partnerCode, a.applicationReference, v.status AS verificationStatus
        FROM client_applications a LEFT JOIN client_verifications v ON v.application_id = a.id
       WHERE a.id = ?`,
     [session.userId]
@@ -26,6 +26,7 @@ export async function getCurrentUser() {
     // stored as the national number; shown (and sent to Sumsub) in international form
     phone: row.phone ? fullPhone(row.phoneCountry || row.country, row.phone) : '',
     partnerCode: row.partnerCode ?? '',
+    reference: row.applicationReference ?? '',
     // Sumsub outcome (client_verifications, src/lib/verification.js); null before verification has started
     verificationStatus: row.verificationStatus ?? null
   };

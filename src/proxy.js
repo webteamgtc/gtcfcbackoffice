@@ -8,10 +8,10 @@ const encodedKey = new TextEncoder().encode(process.env.SESSION_SECRET);
 export default async function proxy(req) {
   const { pathname } = req.nextUrl;
 
-  // portal hidden: "/" shows the application form, everything else goes back to "/"
+  // portal hidden: "/" shows the application form, plus the Sumsub outcome pages; everything else goes back to "/"
   if (!PORTAL_LOGIN_ENABLED) {
     if (pathname === '/') return NextResponse.rewrite(new URL('/apply', req.nextUrl));
-    if (pathname === '/apply') return NextResponse.next();
+    if (['/apply', '/success', '/failed'].includes(pathname)) return NextResponse.next();
     return NextResponse.redirect(new URL('/', req.nextUrl));
   }
 

@@ -31,7 +31,14 @@ function createPool() {
 }
 
 export function getPool() {
+  // `next dev` reloads .env.local without restarting: a pool for other MYSQL_* settings is replaced, not reused
+  const target = ['MYSQL_HOST', 'MYSQL_PORT', 'MYSQL_USER', 'MYSQL_DATABASE'].map((k) => process.env[k]).join('|');
+  if (globalForDb._mysqlPool && globalForDb._mysqlPoolTarget !== target) {
+    globalForDb._mysqlPool.end().catch(() => {});
+    globalForDb._mysqlPool = null;
+  }
   globalForDb._mysqlPool ??= createPool();
+  globalForDb._mysqlPoolTarget = target;
   return globalForDb._mysqlPool;
 }
 
