@@ -37,6 +37,10 @@
 .ap-screen { position: relative; z-index: 2; display: flex; flex-direction: column; gap: 24px; } /* above the buttons, so an open calendar is never covered */
 .ap-screen .apply-grid > *, .ap-screen .apply-agreements > * { animation: ap-rise 0.5s cubic-bezier(0.22, 1, 0.36, 1) backwards; }
 .ap-screen .apply-grid > :has(.dp-pop) { position: relative; z-index: 5; }
+/* while the calendar is open, the card gets extra room below the fields (the card clips what overflows it), so the whole
+   calendar shows and the Continue button moves down; it moves back when the calendar closes */
+.ap-screen { transition: padding-bottom 0.2s ease; }
+.ap-screen:has(.dp-pop) { padding-bottom: 180px; }
 .ap-screen .apply-grid > :nth-child(2), .ap-screen .apply-agreements > :nth-child(2) { animation-delay: 0.04s; }
 .ap-screen .apply-grid > :nth-child(3), .ap-screen .apply-agreements > :nth-child(3) { animation-delay: 0.08s; }
 .ap-screen .apply-grid > :nth-child(4) { animation-delay: 0.12s; }
@@ -145,6 +149,11 @@
 .doc.is-on { border-color: rgba(21, 122, 82, 0.45); box-shadow: 0 0 0 1px rgba(21, 122, 82, 0.15) inset; }
 .doc.is-bad { border-color: rgba(180, 35, 35, 0.45); }
 .doc-head { display: flex; align-items: center; gap: 14px; }
+.doc-head.is-link { cursor: pointer; border-radius: 12px; }
+.doc-head.is-link:hover .doc-title strong { color: var(--brand); }
+.doc-head.is-link:hover .file-btn { background: var(--brand); color: #fff; }
+.agreement-hint { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 13px; font-weight: 600; color: var(--brand); }
+.agreement-hint svg { width: 15px; height: 15px; flex-shrink: 0; }
 .doc-icon { position: relative; display: grid; place-items: center; width: 46px; height: 54px; flex-shrink: 0; border-radius: 6px 14px 8px 8px; background: linear-gradient(160deg, var(--brand-soft), #dfe4f7); color: var(--brand); }
 .doc-icon svg { width: 22px; height: 22px; }
 .doc-check { position: absolute; right: -6px; bottom: -6px; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--ok); color: #fff; box-shadow: 0 0 0 3px #fff; animation: ap-icon-in 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) both; }
@@ -155,6 +164,10 @@
 .doc-accept { position: relative; display: flex; gap: 12px; padding: 12px 14px; border-radius: 12px; background: #f6f7fb; font-size: 13px; line-height: 1.6; color: #4b5270; cursor: pointer; transition: background 0.3s; }
 .doc.is-on .doc-accept { background: #f1faf5; }
 .doc-accept input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.doc-accept.is-locked { opacity: 0.75; cursor: pointer; background: #f3f4f8; }
+.doc-accept.is-locked .declare-box { border-style: dashed; }
+.doc-lock { display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 12.5px; color: var(--brand); }
+.doc-lock svg { width: 14px; height: 14px; flex-shrink: 0; }
 .doc-accept:has(input:focus-visible) { outline: 3px solid rgba(41, 59, 147, 0.35); outline-offset: 2px; }
 .doc.is-on .declare-box { border-color: var(--ok); background: var(--ok); color: #fff; transform: scale(1.08); }
 

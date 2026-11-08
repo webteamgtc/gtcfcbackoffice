@@ -198,10 +198,32 @@ Yemen|YE|967
 Zambia|ZM|260
 Zimbabwe|ZW|263`;
 
+/** Flag emoji of an ISO 3166-1 alpha-2 code (two regional-indicator letters), e.g. "AE" → 🇦🇪. */
+export const flagEmoji = (code) =>
+  String(code ?? '')
+    .toUpperCase()
+    .replace(/[A-Z]/g, (ch) => String.fromCodePoint(0x1f1e6 + ch.charCodeAt(0) - 65));
+
 export const COUNTRIES = RAW.split('\n').map((line) => {
   const [name, code, dial] = line.split('|');
-  return { name, code, dial };
+  return { name, code, dial, flag: flagEmoji(code) };
 });
+
+/**
+ * Countries we don't take applications from: shown in no country-of-residence / nationality list, and refused by the
+ * server too (src/lib/application.js). Edit the two lists below to change it (ISO codes).
+ *   PROHIBITED: sanctioned / prohibited countries
+ *   SERVICE_RESTRICTED: countries our service isn't offered in
+ * (The "high risk" countries are accepted; they are for the compliance team's review.)
+ */
+export const PROHIBITED_COUNTRIES = ['KP', 'IR', 'MM']; // Democratic People's Republic of Korea, Iran, Myanmar
+export const SERVICE_RESTRICTED_COUNTRIES = ['AF', 'RU', 'UA', 'IL', 'US', 'AU', 'JP']; // Afghanistan, Russia, Ukraine, Israel, USA, Australia, Japan
+const BLOCKED = new Set([...PROHIBITED_COUNTRIES, ...SERVICE_RESTRICTED_COUNTRIES]);
+
+export const isBlockedCountry = (code) => BLOCKED.has(String(code ?? '').toUpperCase());
+
+/** The countries a client can choose as residence / nationality (dial-code lists keep every country). */
+export const SELECTABLE_COUNTRIES = COUNTRIES.filter((c) => !BLOCKED.has(c.code));
 
 export const DEFAULT_COUNTRY = 'AE';
 

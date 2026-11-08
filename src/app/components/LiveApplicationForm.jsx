@@ -31,7 +31,7 @@ import {
   AGREEMENT_TEXT, EMPTY_APPLICATION, EMPTY_SHAREHOLDER, e164, ID_TYPES, MAX_SHAREHOLDERS, OPTIONS, PEP_TEXT, STEPS, STEP_FIELDS, firstStepWithError, isCorporate, needsBackSide, stepsFor,
   validateAll, validateStep
 } from '@/lib/application';
-import { COUNTRIES, DEFAULT_COUNTRY, countryByCode } from '@/lib/countries';
+import { COUNTRIES, DEFAULT_COUNTRY, SELECTABLE_COUNTRIES, countryByCode } from '@/lib/countries';
 import { DOC_LABELS } from '@/lib/kyc';
 import { BRAND } from '@/lib/brand';
 import SumsubVerification from './SumsubVerification';
@@ -39,6 +39,7 @@ import SumsubVerification from './SumsubVerification';
 // the 3D globe behind the journey panel loads after the form (three.js stays out of the first load)
 const JourneyGlobe = dynamic(() => import('./JourneyGlobe'), { ssr: false });
 import DatePicker from './DatePicker';
+import CountrySelect from './CountrySelect';
 import {
   AlertIcon, ArrowRightIcon, BriefcaseIcon, BuildingIcon, ChartIcon, CheckIcon, ClockIcon, FileIcon, GlobeIcon, HomeIcon, IdCardIcon, LockIcon, MailIcon, PenIcon,
   PhoneIcon, PlusIcon, ShieldIcon, SparkIcon, UploadIcon, UserIcon, UsersIcon, WalletIcon, XIcon
@@ -47,7 +48,8 @@ import {
 const ACCEPT = '.pdf,.jpg,.jpeg,.png';
 const MAX_BYTES = 4 * 1024 * 1024; // per file, after shrinking (server: actions/application.js)
 const RESEND_SECONDS = 60; // matches the one-minute limit of src/lib/otpStore.js
-const COUNTRY_OPTIONS = COUNTRIES.map((c) => ({ value: c.code, label: c.name }));
+// residence / nationality lists: with the flag, without the countries we don't accept (src/lib/countries.js)
+const COUNTRY_OPTIONS = SELECTABLE_COUNTRIES.map((c) => ({ value: c.code, label: `${c.flag}  ${c.name}` }));
 const asOptions = (list) => list.map((o) => ({ value: o, label: o }));
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -288,6 +290,19 @@ export default function LiveApplicationForm() {
     </Field>
   );
 
+  /** Country list with flags and search (residence, nationality, registration country); blocked countries are not in it. */
+  const countryField = (k, label, { wide, placeholder = 'Choose a country' } = {}) => (
+    <Field id={`ap-${k}`} label={label} required error={err(k)} wide={wide}>
+      {control(
+        k,
+        null,
+        <CountrySelect id={`ap-${k}`} value={values[k]} onChange={(code) => setValue(k, code)} onBlur={blur(k)} countries={SELECTABLE_COUNTRIES} placeholder={placeholder} invalid={Boolean(err(k))} />,
+        ' country',
+        false
+      )}
+    </Field>
+  );
+
   const choiceField = (k, label, options, { wide = true, cols } = {}) => (
     <fieldset className={`choice-field${wide ? ' apply-wide' : ''}`}>
       <legend className="label">
@@ -363,7 +378,19 @@ export default function LiveApplicationForm() {
   const [openDoc, setOpenDoc] = useState(null);
   const signingField = (docs, notice, company) => {
     const allOn = docs.every((d) => values[d.k]);
+    // a document with a PDF must be opened (read) before it can be signed; opening it is recorded with the application
+    const isRead = (d) => !d.url || values[`${d.k}Read`];
+    const toggleDoc = (d) => {
+      const opening = openDoc !== d.k;
+      setOpenDoc(opening ? d.k : null);
+      if (opening) setValues((v) => ({ ...v, [`${d.k}Read`]: true }));
+    };
     const setAll = (on) => {
+      if (on) {
+        // "agree to all" can't skip reading: it opens the first document not read yet instead
+        const unread = docs.find((d) => !isRead(d));
+        if (unread) return toggleDoc(unread);
+      }
       setValues((v) => ({ ...v, ...Object.fromEntries(docs.map((d) => [d.k, on])) }));
       setTouched((t) => ({ ...t, ...Object.fromEntries(docs.map((d) => [d.k, true])) }));
       setServerErrors((e) => Object.fromEntries(Object.entries(e).filter(([k]) => !docs.some((d) => d.k === k))));
@@ -385,7 +412,10 @@ export default function LiveApplicationForm() {
         <ol className="docs">
           {docs.map((d, i) => (
             <li key={d.k} className={`doc${values[d.k] ? ' is-on' : ''}${err(d.k) ? ' is-bad' : ''}`}>
-              <div className="doc-head">
+              <div
+                className={`doc-head${d.url ? ' is-link' : ''}`}
+                onClick={d.url ? () => toggleDoc(d) : undefined}
+              >
                 <span className="doc-icon">
                   <FileIcon />
                   {values[d.k] && (
@@ -399,8 +429,9 @@ export default function LiveApplicationForm() {
                   <strong>{d.title}</strong>
                 </span>
                 {d.url && (
-                  <button type="button" className="file-btn" onClick={() => setOpenDoc(openDoc === d.k ? null : d.k)} aria-expanded={openDoc === d.k}>
-                    {openDoc === d.k ? 'Close' : 'Read'}
+                  // no handler of its own: the click reaches the row above, which opens / closes the document
+                  <button type="button" className="file-btn" aria-expanded={openDoc === d.k}>
+                    {openDoc === d.k ? 'Close' : 'Read & sign'}
                   </button>
                 )}
               </div>
@@ -410,14 +441,24 @@ export default function LiveApplicationForm() {
                   <a href={d.url} target="_blank" rel="noopener noreferrer" className="help-link">
                     <FileIcon /> Open in a new tab
                   </a>
+                  <p className="agreement-hint">
+                    <PenIcon /> After reading, tick the box below to sign this document electronically.
+                  </p>
                 </div>
               )}
-              <label className="doc-accept">
-                <input type="checkbox" checked={values[d.k]} onChange={set(d.k)} onBlur={blur(d.k)} />
+              <label className={`doc-accept${isRead(d) ? '' : ' is-locked'}`} onClick={!isRead(d) ? () => toggleDoc(d) : undefined}>
+                <input type="checkbox" checked={values[d.k]} onChange={set(d.k)} onBlur={blur(d.k)} disabled={!isRead(d)} />
                 <span className="declare-box" aria-hidden="true">
                   <CheckIcon />
                 </span>
-                <span>{AGREEMENT_TEXT}</span>
+                <span>
+                  {AGREEMENT_TEXT}
+                  {!isRead(d) && (
+                    <strong className="doc-lock">
+                      <LockIcon /> Open and read “{d.title}” first (press Read &amp; sign above) to unlock this box.
+                    </strong>
+                  )}
+                </span>
               </label>
               {err(d.k) && (
                 <p className="field-error" role="alert">
@@ -796,7 +837,7 @@ export default function LiveApplicationForm() {
               </option>
               {COUNTRIES.map((c) => (
                 <option key={c.code} value={c.code}>
-                  {c.name} (+{c.dial})
+                  {c.flag}  {c.name} (+{c.dial})
                 </option>
               ))}
             </select>
@@ -952,8 +993,8 @@ export default function LiveApplicationForm() {
             {textField('lastName', 'Surname', { icon: <UserIcon />, placeholder: 'Surname', autoComplete: 'family-name' })}
             {textField('firstName', 'Given name', { icon: <UserIcon />, placeholder: 'Given name', autoComplete: 'given-name' })}
             {dateField('dateOfBirth', 'Date of birth', { initialView: `${new Date().getFullYear() - 30}-01-01` })}
-            {selectField('country', 'Country of residence', COUNTRY_OPTIONS, { icon: <GlobeIcon />, placeholder: 'Choose a country' })}
-            {selectField('nationality', 'Nationality', COUNTRY_OPTIONS, { icon: <GlobeIcon />, placeholder: 'Choose a country' })}
+            {countryField('country', 'Country of residence')}
+            {countryField('nationality', 'Nationality')}
           </div>
         );
       case 1:
@@ -961,7 +1002,7 @@ export default function LiveApplicationForm() {
       case 2:
         return (
           <div className="apply-grid">
-            {selectField('nationality', 'Nationality', COUNTRY_OPTIONS, { icon: <GlobeIcon />, placeholder: 'Choose a country' })}
+            {countryField('nationality', 'Nationality')}
             <div className="apply-spacer" aria-hidden />
             {choiceField(
               'idType',
@@ -990,7 +1031,7 @@ export default function LiveApplicationForm() {
         return (
           <div className="apply-grid">
             {fileField('poaFile', 'Utilities & bank statements', { wide: true, hint: 'A utility bill or bank statement from the last 3 months showing your name and address · JPG, PNG or PDF' })}
-            {selectField('poaCountry', 'Country (region) of residence', COUNTRY_OPTIONS, { icon: <GlobeIcon />, placeholder: 'Choose a country' })}
+            {countryField('poaCountry', 'Country (region) of residence')}
             {textField('postalCode', 'Postal code', { placeholder: 'Postal code', autoComplete: 'postal-code' })}
             <Field id="ap-address" label="Detailed address" required error={err('address')} wide>
               <textarea
@@ -1052,7 +1093,7 @@ export default function LiveApplicationForm() {
             {textField('companyName', 'Company name', { icon: <BuildingIcon />, placeholder: 'As registered', autoComplete: 'organization', wide: true })}
             {textField('regNumber', 'Registration number', { placeholder: 'Registration number', autoComplete: 'off' })}
             {dateField('regDate', 'Registration date', { initialView: `${new Date().getFullYear() - 5}-01-01` })}
-            {selectField('regCountry', 'Registration country', COUNTRY_OPTIONS, { icon: <GlobeIcon />, placeholder: 'Choose a country' })}
+            {countryField('regCountry', 'Registration country')}
             {textField('regCity', 'Registration city', { placeholder: 'City' })}
             {textField('regPostalCode', 'Postal code', { placeholder: 'Postal code' })}
             {textField('secondaryPhone', 'Secondary phone number', { optional: true, icon: <PhoneIcon />, type: 'tel', inputMode: 'tel', placeholder: '+971 4 123 4567' })}
@@ -1077,7 +1118,7 @@ export default function LiveApplicationForm() {
             <p className="apply-section apply-wide">Authorised person</p>
             {textField('repName', 'Name', { icon: <UserIcon />, placeholder: 'Full name as on the passport' })}
             {textField('repPassport', 'Passport', { icon: <IdCardIcon />, placeholder: 'Passport number', autoComplete: 'off' })}
-            {selectField('repNationality', 'Nationality', COUNTRY_OPTIONS, { icon: <GlobeIcon />, placeholder: 'Choose a country' })}
+            {countryField('repNationality', 'Nationality')}
             {ratioField('repRatio', 'Shareholding ratio')}
             {textField('repEmail', 'Email', { icon: <MailIcon />, type: 'email', placeholder: 'name@company.com', autoComplete: 'email' })}
             {textField('repPhone', 'Phone number', { icon: <PhoneIcon />, type: 'tel', inputMode: 'tel', placeholder: '+971 50 123 4567', autoComplete: 'tel' })}
