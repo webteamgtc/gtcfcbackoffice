@@ -37,6 +37,10 @@
 .ap-screen { position: relative; z-index: 2; display: flex; flex-direction: column; gap: 24px; } /* above the buttons, so an open calendar is never covered */
 .ap-screen .apply-grid > *, .ap-screen .apply-agreements > * { animation: ap-rise 0.5s cubic-bezier(0.22, 1, 0.36, 1) backwards; }
 .ap-screen .apply-grid > :has(.dp-pop) { position: relative; z-index: 5; }
+/* while the calendar is open, the card gets extra room below the fields (the card clips what overflows it), so the whole
+   calendar shows and the Continue button moves down; it moves back when the calendar closes */
+.ap-screen { transition: padding-bottom 0.2s ease; }
+.ap-screen:has(.dp-pop) { padding-bottom: 180px; }
 .ap-screen .apply-grid > :nth-child(2), .ap-screen .apply-agreements > :nth-child(2) { animation-delay: 0.04s; }
 .ap-screen .apply-grid > :nth-child(3), .ap-screen .apply-agreements > :nth-child(3) { animation-delay: 0.08s; }
 .ap-screen .apply-grid > :nth-child(4) { animation-delay: 0.12s; }
@@ -145,6 +149,11 @@
 .doc.is-on { border-color: rgba(21, 122, 82, 0.45); box-shadow: 0 0 0 1px rgba(21, 122, 82, 0.15) inset; }
 .doc.is-bad { border-color: rgba(180, 35, 35, 0.45); }
 .doc-head { display: flex; align-items: center; gap: 14px; }
+.doc-head.is-link { cursor: pointer; border-radius: 12px; }
+.doc-head.is-link:hover .doc-title strong { color: var(--brand); }
+.doc-head.is-link:hover .file-btn { background: var(--brand); color: #fff; }
+.agreement-hint { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 13px; font-weight: 600; color: var(--brand); }
+.agreement-hint svg { width: 15px; height: 15px; flex-shrink: 0; }
 .doc-icon { position: relative; display: grid; place-items: center; width: 46px; height: 54px; flex-shrink: 0; border-radius: 6px 14px 8px 8px; background: linear-gradient(160deg, var(--brand-soft), #dfe4f7); color: var(--brand); }
 .doc-icon svg { width: 22px; height: 22px; }
 .doc-check { position: absolute; right: -6px; bottom: -6px; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--ok); color: #fff; box-shadow: 0 0 0 3px #fff; animation: ap-icon-in 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) both; }
@@ -155,6 +164,10 @@
 .doc-accept { position: relative; display: flex; gap: 12px; padding: 12px 14px; border-radius: 12px; background: #f6f7fb; font-size: 13px; line-height: 1.6; color: #4b5270; cursor: pointer; transition: background 0.3s; }
 .doc.is-on .doc-accept { background: #f1faf5; }
 .doc-accept input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.doc-accept.is-locked { opacity: 0.75; cursor: pointer; background: #f3f4f8; }
+.doc-accept.is-locked .declare-box { border-style: dashed; }
+.doc-lock { display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 12.5px; color: var(--brand); }
+.doc-lock svg { width: 14px; height: 14px; flex-shrink: 0; }
 .doc-accept:has(input:focus-visible) { outline: 3px solid rgba(41, 59, 147, 0.35); outline-offset: 2px; }
 .doc.is-on .declare-box { border-color: var(--ok); background: var(--ok); color: #fff; transform: scale(1.08); }
 
@@ -197,7 +210,7 @@
 
 /* ============================================================ layout */
 
-.ap { display: grid; grid-template-columns: minmax(320px, 400px) minmax(0, 1fr); min-height: 100vh; background: var(--bg); }
+.ap { display: grid; grid-template-columns: clamp(340px, 32vw, 480px) minmax(0, 1fr); min-height: 100vh; background: var(--bg); }
 .ap-a-panel {
   position: sticky; top: 0; height: 100vh; overflow-y: auto; color: #fff;
   background: radial-gradient(90% 60% at 100% 0%, rgba(182, 135, 86, 0.32), transparent 55%), linear-gradient(160deg, var(--navy-2) 0%, var(--navy) 75%);
@@ -205,7 +218,7 @@
 .ap-a-panel::before { content: ''; position: absolute; inset: 0; background-image: linear-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px); background-size: 44px 44px; mask-image: radial-gradient(ellipse at 80% 10%, #000, transparent 70%); pointer-events: none; }
 .ap-globe { position: absolute; inset: 0; z-index: 0; pointer-events: none; -webkit-mask-image: linear-gradient(to bottom, transparent 45%, #000 78%); mask-image: linear-gradient(to bottom, transparent 45%, #000 78%); animation: ap-fade 1.6s ease both; }
 .ap-globe canvas { display: block; width: 100%; height: 100%; }
-.ap-a-panel-inner { z-index: 1; position: relative; display: flex; flex-direction: column; min-height: 100%; padding: 40px 36px 32px; }
+.ap-a-panel-inner { z-index: 1; position: relative; display: flex; flex-direction: column; min-height: 100%; padding: 44px 44px 32px; }
 .ap .apply-logo { margin-bottom: 36px; }
 .ap-a-status { display: flex; align-items: center; gap: 18px; padding: 18px; border-radius: 20px; background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.12); backdrop-filter: blur(6px); }
 .ap-a-status .auth-kicker { margin: 0 0 2px; font-size: 11px; }
@@ -320,3 +333,107 @@
 .result-next h3 { margin: 0; font-size: 18px; }
 .result-next p { margin: 0; font-size: 15px; color: var(--muted); overflow-wrap: anywhere; }
 .result-next a { color: var(--brand); font-weight: 600; }
+/* ============================================================ design polish (card, fields, buttons, trust row) */
+
+/* the card: more air, layered shadow, a thin brand → gold line on top */
+.ap .apply-card { position: relative; gap: 28px; padding: 40px 44px 36px; border: 1px solid rgba(214, 220, 238, 0.9); border-radius: 28px; background: #fff; box-shadow: 0 1px 0 rgba(255, 255, 255, 0.9) inset, 0 2px 4px rgba(11, 20, 64, 0.04), 0 24px 60px -24px rgba(11, 20, 64, 0.22); }
+.ap .apply-card::before { content: ''; position: absolute; inset: 0 0 auto 0; height: 4px; background: linear-gradient(90deg, var(--brand), var(--brand-2) 55%, #d0a574); }
+.ap .apply-head { padding-bottom: 22px; border-bottom: 1px solid var(--line); }
+.ap .apply-head h2 { font-size: 28px; letter-spacing: -0.02em; line-height: 1.15; }
+.ap .apply-head p { margin-top: 8px; font-size: 15px; line-height: 1.5; }
+.ap-head-icon { width: 58px; height: 58px; border-radius: 18px; }
+
+/* fields: taller, softer, a clear focus state */
+.ap .label { margin-bottom: 9px; font-size: 13.5px; font-weight: 700; letter-spacing: 0.005em; color: #2a3150; }
+.ap .control { min-height: 54px; padding: 0 16px; border: 1.5px solid #dfe4f1; border-radius: 14px; background: #fbfcff; transition: border-color 0.18s, box-shadow 0.18s, background 0.18s; }
+.ap .control:hover:not(:focus-within) { border-color: #c5ccdf; background: #fff; }
+.ap .control:focus-within { border-color: var(--brand); background: #fff; box-shadow: 0 0 0 4px rgba(41, 59, 147, 0.12); }
+.ap .control.is-bad { border-color: rgba(180, 35, 35, 0.6); background: #fffafa; }
+.ap .control.is-ok { background: #fff; }
+.ap .control input, .ap .control select, .ap .control .dp-trigger, .ap .control .cs-trigger { height: 52px; font-size: 15.5px; }
+.ap .control .icon { margin-inline-end: 12px; }
+.ap .control .icon svg { width: 19px; height: 19px; }
+.ap .textarea { border: 1.5px solid #dfe4f1; border-radius: 14px; background: #fbfcff; }
+.ap .textarea:focus { border-color: var(--brand); background: #fff; box-shadow: 0 0 0 4px rgba(41, 59, 147, 0.12); outline: none; }
+.ap .apply-grid { gap: 22px 22px; }
+.ap .apply-section { margin-top: 10px; padding-top: 20px; letter-spacing: 0.1em; }
+
+/* the picker panels follow the same look */
+.cs-pop, .dp-pop { border-radius: 18px; border-color: #dfe4f1; }
+
+/* choice cards (document type, account type) */
+.ap .choice, .ap .choice-card { border-radius: 14px; }
+
+/* buttons: a stronger primary with a moving arrow, a calmer Back */
+.ap .apply-actions { gap: 14px; padding-top: 6px; }
+.ap .btn { min-height: 54px; border-radius: 15px; }
+.ap .btn-next { min-height: 58px; font-size: 16.5px; letter-spacing: 0.01em; background: linear-gradient(135deg, #2f45ad, var(--brand) 45%, var(--navy)); box-shadow: 0 18px 34px -16px rgba(27, 42, 134, 0.85), 0 1px 0 rgba(255, 255, 255, 0.18) inset; transition: transform 0.18s, box-shadow 0.18s, filter 0.18s; }
+.ap .btn-next:hover:not(:disabled) { filter: brightness(1.08); transform: translateY(-2px); box-shadow: 0 22px 38px -16px rgba(27, 42, 134, 0.9), 0 1px 0 rgba(255, 255, 255, 0.18) inset; }
+.ap .btn-next:active:not(:disabled) { transform: translateY(0); }
+.ap .btn-next svg { transition: transform 0.2s; }
+.ap .btn-next:hover:not(:disabled) svg { transform: translateX(3px); }
+.ap .btn-next.btn-gold { background: linear-gradient(135deg, #dcb283, #c4975f 55%, #b88a55); color: #1d1406; box-shadow: 0 18px 34px -16px rgba(182, 135, 86, 0.95), 0 1px 0 rgba(255, 255, 255, 0.35) inset; }
+.ap .btn-ghost { min-width: 112px; border: 1.5px solid #dfe4f1; background: #fff; }
+
+/* small reassurance under the buttons */
+.ap-trust { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px 22px; margin: 2px 0 0; padding: 0; list-style: none; font-size: 12.5px; color: var(--muted); }
+.ap-trust li { display: inline-flex; align-items: center; gap: 7px; }
+.ap-trust svg { width: 14px; height: 14px; color: var(--ok); flex-shrink: 0; }
+
+/* footer line under the card */
+.ap .auth-foot { margin-top: 26px; font-size: 12.5px; letter-spacing: 0.01em; }
+
+@media (max-width: 1024px) {
+  .ap .apply-card { padding: 32px 28px 28px; }
+}
+@media (max-width: 640px) {
+  .ap .apply-card { gap: 22px; padding: 28px 20px 24px; border-radius: 22px; }
+  .ap .apply-head h2 { font-size: 24px; }
+  .ap-head-icon { width: 52px; height: 52px; border-radius: 16px; }
+  .ap .control { min-height: 52px; }
+  .ap .control input, .ap .control select, .ap .control .dp-trigger, .ap .control .cs-trigger { height: 50px; }
+  .ap-trust { justify-content: flex-start; gap: 6px 16px; }
+  /* the mobile number: the number gets the full row, the "Send on WhatsApp" button its own row below */
+  .ap .control:has(.dial-pick) { flex-wrap: wrap; padding-bottom: 10px; }
+  .ap .control:has(.dial-pick) input { flex: 1 1 120px; }
+  .ap .control:has(.dial-pick) .code-btn { flex: 1 1 100%; margin: 0; min-height: 42px; }
+}
+
+/* ============================================================ moving background behind the form card (decorative) */
+
+.ap-a-main { isolation: isolate; } /* no overflow clipping here: the phone progress card overlaps the header; .ap-bg clips its own shapes */
+.ap-a-main > :not(.ap-bg) { position: relative; z-index: 1; }
+.ap-bg { position: absolute; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
+
+/* faint dotted grid that slowly drifts, fading out towards the edges */
+.ap-bg::before { content: ''; position: absolute; inset: -40px; background-image: radial-gradient(rgba(41, 59, 147, 0.26) 1.3px, transparent 1.8px); background-size: 30px 30px; mask-image: radial-gradient(ellipse at 55% 35%, #000 10%, transparent 72%); animation: ap-grid-drift 50s linear infinite; }
+
+/* soft colour clouds that float around */
+.ap-blob { position: absolute; display: block; border-radius: 50%; filter: blur(70px); will-change: transform; }
+.ap-blob.b1 { width: 520px; height: 520px; top: -14%; right: -10%; background: radial-gradient(circle, rgba(58, 79, 184, 0.5), transparent 68%); animation: ap-float-a 22s ease-in-out infinite alternate; }
+.ap-blob.b2 { width: 460px; height: 460px; bottom: -12%; left: -8%; background: radial-gradient(circle, rgba(208, 165, 116, 0.55), transparent 68%); animation: ap-float-b 26s ease-in-out infinite alternate; }
+.ap-blob.b3 { width: 380px; height: 380px; top: 42%; left: 52%; background: radial-gradient(circle, rgba(94, 120, 230, 0.32), transparent 70%); animation: ap-float-c 30s ease-in-out infinite alternate; }
+
+/* two thin rings, each with a small dot travelling around it (the same idea as the globe in the side panel) */
+.ap-orbit { position: absolute; display: block; border: 1.5px solid rgba(41, 59, 147, 0.24); border-radius: 50%; animation: ap-spin 60s linear infinite; }
+.ap-orbit b { position: absolute; top: -5px; left: 50%; width: 9px; height: 9px; margin-left: -4.5px; border-radius: 50%; background: #c4975f; box-shadow: 0 0 0 5px rgba(196, 151, 95, 0.18), 0 0 16px rgba(196, 151, 95, 0.7); }
+.ap-orbit.o1 { width: 760px; height: 760px; top: -260px; right: -300px; }
+.ap-orbit.o2 { width: 520px; height: 520px; bottom: -200px; left: -170px; border-color: rgba(196, 151, 95, 0.4); animation-duration: 80s; animation-direction: reverse; }
+.ap-orbit.o2 b { background: var(--brand); box-shadow: 0 0 0 5px rgba(41, 59, 147, 0.14), 0 0 16px rgba(58, 79, 184, 0.6); }
+
+@keyframes ap-float-a { from { transform: translate3d(0, 0, 0) scale(1); } to { transform: translate3d(-120px, 90px, 0) scale(1.15); } }
+@keyframes ap-float-b { from { transform: translate3d(0, 0, 0) scale(1.05); } to { transform: translate3d(140px, -80px, 0) scale(0.92); } }
+@keyframes ap-float-c { from { transform: translate3d(0, 0, 0) scale(0.9); } to { transform: translate3d(-160px, -60px, 0) scale(1.2); } }
+@keyframes ap-grid-drift { to { background-position: 30px 60px; } }
+@keyframes ap-spin { to { transform: rotate(360deg); } }
+
+@media (max-width: 760px) {
+  .ap-orbit { display: none; }
+  .ap-blob { filter: blur(50px); }
+  .ap-blob.b1 { width: 340px; height: 340px; }
+  .ap-blob.b2 { width: 300px; height: 300px; }
+  .ap-blob.b3 { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ap-bg::before, .ap-blob, .ap-orbit { animation: none !important; }
+}

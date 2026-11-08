@@ -183,7 +183,7 @@ export async function submitApplication(input) {
       pep: questionnaire ? (v.pep ? 1 : 0) : null,
       // 2.5 (and 2.8) what was signed and when
       agreements: JSON.stringify([
-        ...BRAND.agreements.map((a, i) => ({ title: a.title, url: a.url || null, accepted: Boolean(v[`agreement${i + 1}`]), acceptedAt: agreedAt })),
+        ...BRAND.agreements.map((a, i) => ({ title: a.title, url: a.url || null, accepted: Boolean(v[`agreement${i + 1}`]), read: Boolean(v[`agreement${i + 1}Read`]), acceptedAt: agreedAt })),
         ...(corporate ? [{ title: BRAND.corporateAgreement?.title ?? 'Client Agreement (Corporate)', url: BRAND.corporateAgreement?.url || null, accepted: true, acceptedAt: agreedAt }] : [])
       ]),
       // 2.6–2.7 corporate clients

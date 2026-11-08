@@ -5,7 +5,8 @@
 // steps 2 and 3 (actions/application.js → uploadApplicationFile, stored in MySQL application_files); the form keeps their file ids.
 // Sumsub still runs after submission (src/app/components/SumsubVerification.jsx).
 // Field lists, options and rules shared by the form and the server actions. Pure, so the client form can use it too.
-import { countryByCode } from '@/lib/countries';
+import { countryByCode, isBlockedCountry } from '@/lib/countries';
+import { BRAND } from '@/lib/brand';
 
 export const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const LETTERS_RE = /^[\p{L}\p{M}\s'’.-]+$/u;
@@ -88,7 +89,8 @@ export const PEP_TEXT =
 export const AGREEMENT_TEXT =
   'I confirm that I have carefully read all the terms and conditions of the Risk Acknowledgement And Disclosure, and that the information I have provided is true and accurate. I agree to sign this legally binding contract and accept the associated responsibilities. I understand and agree that this electronic signature is equivalent to a handwritten signature.';
 
-const BOOLEANS = ['pep', 'agreement1', 'agreement2', 'corporateAgreement'];
+// `…Read`: the client opened that document (src/lib/brand.js gives it a PDF) before signing it
+const BOOLEANS = ['pep', 'agreement1', 'agreement2', 'corporateAgreement', 'agreement1Read', 'agreement2Read', 'corporateAgreementRead'];
 
 /** The uploads of the form: field → document type stored with the file (the ID photos use the chosen ID type). */
 export const FILE_FIELDS = {
@@ -154,6 +156,8 @@ export const EMPTY_APPLICATION = {
   // 2.5 client agreement
   agreement1: false,
   agreement2: false,
+  agreement1Read: false,
+  agreement2Read: false,
   // 2.6 company information (corporate)
   companyName: '',
   regNumber: '',
@@ -178,7 +182,8 @@ export const EMPTY_APPLICATION = {
   licenseRegNumber: '',
   licenseFile: '',
   // 2.8 client agreement (corporate)
-  corporateAgreement: false
+  corporateAgreement: false,
+  corporateAgreementRead: false
 };
 
 // which step each field belongs to — the form marks a step's fields as touched on "Next"
@@ -272,6 +277,14 @@ const oneOf = (e, v, k, list, msg) => {
   if (!list.includes(v[k])) e[k] = msg;
 };
 
+const READ_FIRST = 'Please open and read the document before signing it.';
+
+/** Message when a residence / nationality / registration country is missing or one we can't accept; undefined when fine. */
+const countryError = (code, missing) => {
+  if (!countryByCode(code)) return missing;
+  if (isBlockedCountry(code)) return `Sorry, we can't accept applications for ${countryByCode(code).name} at the moment.`;
+};
+
 /** Field → message for one step's invalid fields. Uploads count as given once the form holds their file id. */
 export function validateStep(key, v) {
   const e = {};
@@ -284,8 +297,8 @@ export function validateStep(key, v) {
     else if (v.dateOfBirth > today()) e.dateOfBirth = 'Date of birth cannot be in the future.';
     else if (ageOn(v.dateOfBirth) < 18) e.dateOfBirth = 'You must be at least 18 years old.';
     else if (ageOn(v.dateOfBirth) > 120) e.dateOfBirth = 'Please check your date of birth.';
-    if (!countryByCode(v.country)) e.country = 'Please choose your country of residence.';
-    if (!countryByCode(v.nationality)) e.nationality = 'Please choose your nationality.';
+    { const m = countryError(v.country, 'Please choose your country of residence.'); if (m) e.country = m; }
+    { const m = countryError(v.nationality, 'Please choose your nationality.'); if (m) e.nationality = m; }
   }
   if (key === 'contact') {
     const mail = emailError(v.email);
@@ -302,7 +315,7 @@ export function validateStep(key, v) {
     else if (!/^[A-Za-z0-9 -]{3,40}$/.test(v.idNumber.trim())) e.idNumber = 'Use letters, numbers and dashes only.';
   }
   if (key === 'identity') {
-    if (!countryByCode(v.nationality)) e.nationality = 'Please choose your nationality.';
+    { const m = countryError(v.nationality, 'Please choose your nationality.'); if (m) e.nationality = m; }
     oneOf(e, v, 'idType', ID_TYPES, 'Please choose your identification document.');
     if (!v.idFront) e.idFront = 'Please upload a photo of the front side.';
     if (needsBackSide(v.idType) && !v.idBack) e.idBack = 'Please upload a photo of the back side.';
@@ -315,7 +328,7 @@ export function validateStep(key, v) {
   }
   if (key === 'address') {
     if (!v.poaFile) e.poaFile = 'Please upload a recent utility bill or bank statement.';
-    if (!countryByCode(v.poaCountry)) e.poaCountry = 'Please choose your country of residence.';
+    { const m = countryError(v.poaCountry, 'Please choose your country of residence.'); if (m) e.poaCountry = m; }
     if (!v.postalCode.trim()) e.postalCode = 'Please enter your postal code.';
     else if (!/^[A-Za-z0-9 -]{2,20}$/.test(v.postalCode.trim())) e.postalCode = 'Please enter a valid postal code.';
     if (v.address.trim().length < 10) e.address = 'Please enter your full address (building, street, city).';
@@ -338,14 +351,16 @@ export function validateStep(key, v) {
   }
   if (key === 'agreement') {
     if (!v.agreement1) e.agreement1 = 'Please confirm to sign the agreement.';
+    else if (BRAND.agreements[0]?.url && !v.agreement1Read) e.agreement1 = READ_FIRST;
     if (!v.agreement2) e.agreement2 = 'Please confirm to sign the agreement.';
+    else if (BRAND.agreements[1]?.url && !v.agreement2Read) e.agreement2 = READ_FIRST;
   }
   if (key === 'company') {
     need(e, v, 'companyName', 'Please enter the company name.');
     need(e, v, 'regNumber', 'Please enter the registration number.');
     if (!DATE_RE.test(v.regDate)) e.regDate = 'Please enter the registration date.';
     else if (v.regDate > today()) e.regDate = 'The date cannot be in the future.';
-    if (!countryByCode(v.regCountry)) e.regCountry = 'Please choose the registration country.';
+    { const m = countryError(v.regCountry, 'Please choose the registration country.'); if (m) e.regCountry = m; }
     need(e, v, 'regCity', 'Please enter the registration city.');
     if (!v.regPostalCode.trim()) e.regPostalCode = 'Please enter the postal code.';
     else if (!/^[A-Za-z0-9 -]{2,20}$/.test(v.regPostalCode.trim())) e.regPostalCode = 'Please enter a valid postal code.';
@@ -354,7 +369,7 @@ export function validateStep(key, v) {
     if (!v.repName.trim()) e.repName = 'Please enter the name.';
     else if (!LETTERS_RE.test(v.repName.trim())) e.repName = 'Use letters only.';
     if (!/^[A-Za-z0-9 -]{3,40}$/.test(v.repPassport.trim())) e.repPassport = 'Please enter the passport number.';
-    if (!countryByCode(v.repNationality)) e.repNationality = 'Please choose the nationality.';
+    { const m = countryError(v.repNationality, 'Please choose the nationality.'); if (m) e.repNationality = m; }
     const ratio = ratioError(v.repRatio);
     if (ratio) e.repRatio = ratio;
     if (v.repAddress.trim().length < 10) e.repAddress = 'Please enter the full residential address.';
@@ -363,7 +378,7 @@ export function validateStep(key, v) {
     if (!v.repPhone) e.repPhone = 'Please enter the phone number.';
     else if (!PHONE_RE.test(v.repPhone)) e.repPhone = 'Please enter a valid phone number.';
     need(e, v, 'repOccupation', 'Please enter the occupation.');
-    const bad = (v.shareholders ?? []).some((x) => !x.name || !x.passport || !countryByCode(x.nationality) || ratioError(x.ratio));
+    const bad = (v.shareholders ?? []).some((x) => !x.name || !x.passport || countryError(x.nationality, 'x') || ratioError(x.ratio));
     if (bad) e.shareholders = 'Complete every shareholder (name, passport, nationality and ratio) or remove it.';
     else {
       const total = Number(v.repRatio || 0) + (v.shareholders ?? []).reduce((n, x) => n + Number(x.ratio || 0), 0);
@@ -377,6 +392,7 @@ export function validateStep(key, v) {
   }
   if (key === 'corporateAgreement') {
     if (!v.corporateAgreement) e.corporateAgreement = 'Please confirm to sign the agreement.';
+    else if (BRAND.corporateAgreement?.url && !v.corporateAgreementRead) e.corporateAgreement = READ_FIRST;
   }
   return e;
 }

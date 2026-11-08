@@ -8,7 +8,7 @@ export const BRAND = {
   // the documents the client signs in the application's agreement step (src/app/apply). With a `url` (a PDF: a full
   // https link, or a file in public/ such as '/docs/client-agreement.pdf'), the card gets a Read button that opens it.
   agreements: [
-    { title: 'Client Agreement', url: '' },
+    { title: 'Client Agreement', url: '/client-agreement.pdf' }, // public/client-agreement.pdf
     { title: 'Risk Acknowledgement and Disclosure', url: '' }
   ],
   // signed by corporate clients in their last step (2.8)
