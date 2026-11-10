@@ -166,7 +166,8 @@ export async function submitApplication(input) {
       phone: v.phone,
       phoneCountry: v.phoneCountry,
       phoneVerifiedAt: now,
-      idNumberEncrypted: encryptField(v.idNumber),
+      // only when the identity step is shown; otherwise Sumsub reads it from the document
+      idNumberEncrypted: v.idNumber ? encryptField(v.idNumber) : null,
       // 2.2 identity: from the form when that step is shown, otherwise collected by Sumsub
       idType: identity ? v.idType : null,
       idFirstName: identity ? v.idFirstName : null,
