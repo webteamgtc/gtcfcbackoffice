@@ -67,7 +67,7 @@ if (add.length) {
 }
 
 const [tables] = await conn.query(
-  "SELECT TABLE_NAME AS name, TABLE_ROWS AS approxRows FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN ('client_applications', 'application_files', 'client_verifications', 'email_otps', 'client_documents')"
+  "SELECT TABLE_NAME AS name, TABLE_ROWS AS approxRows FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN ('client_applications', 'application_files', 'client_verifications', 'email_otps', 'client_documents', 'max_onboarding')"
 );
 console.log(`Schema applied to ${process.env.MYSQL_DATABASE}:`);
 console.table(tables);

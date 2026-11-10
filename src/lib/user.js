@@ -2,6 +2,7 @@ import 'server-only';
 import { query, queryOne } from '@/lib/db';
 import { getSession } from '@/lib/session';
 import { fullPhone } from '@/lib/application';
+import { demoMode } from '@/lib/demo';
 
 /** The signed-in client (a row of client_applications, see db/schema.sql), or null. Never includes the password. */
 export async function getCurrentUser() {
@@ -9,7 +10,7 @@ export async function getCurrentUser() {
   if (!/^\d+$/.test(String(session?.userId ?? ''))) return null;
 
   const row = await queryOne(
-    `SELECT a.id, a.firstName, a.lastName, a.email, a.emailVerifiedAt, a.country, a.phone, a.phoneCountry, a.partnerCode, v.status AS verificationStatus
+    `SELECT a.id, a.firstName, a.lastName, a.email, a.emailVerifiedAt, a.country, a.phone, a.phoneCountry, a.partnerCode, a.applicationReference, v.status AS verificationStatus
        FROM client_applications a LEFT JOIN client_verifications v ON v.application_id = a.id
       WHERE a.id = ?`,
     [session.userId]
@@ -26,8 +27,10 @@ export async function getCurrentUser() {
     // stored as the national number; shown (and sent to Sumsub) in international form
     phone: row.phone ? fullPhone(row.phoneCountry || row.country, row.phone) : '',
     partnerCode: row.partnerCode ?? '',
-    // Sumsub outcome (client_verifications, src/lib/verification.js); null before verification has started
-    verificationStatus: row.verificationStatus ?? null
+    reference: row.applicationReference ?? '',
+    // Sumsub outcome (client_verifications, src/lib/verification.js); null before verification has started.
+    // Demo mode (src/lib/demo.js): everyone counts as verified
+    verificationStatus: demoMode() ? 'approved' : (row.verificationStatus ?? null)
   };
 }
 

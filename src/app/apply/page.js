@@ -1,3 +1,4 @@
+import { redirect } from 'next/navigation';
 import { connection } from 'next/server';
 import Logo from '@/app/components/Logo';
 import LiveApplicationForm from '@/app/components/LiveApplicationForm';
@@ -37,6 +38,9 @@ async function currentApplicant() {
 export default async function ApplyPage() {
   const user = await currentApplicant();
   if (!user) return <LiveApplicationForm />;
+  // Sumsub has decided: straight to the outcome page (pending stays here and waits for the decision)
+  if (user.verificationStatus === 'approved') redirect('/success');
+  if (['rejected', 'resubmit'].includes(user.verificationStatus)) redirect('/failed');
 
   return (
     <main className="apply">

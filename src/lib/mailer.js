@@ -40,3 +40,19 @@ export function applicationReceivedEmail({ name, reference }) {
     )
   };
 }
+
+// sent once the account exists in MAX (src/lib/accountOpening.js); the only place the generated password is shown
+export function accountOpenedEmail({ name, email, password, reference }) {
+  const login = process.env.CAT5_LOGIN_URL;
+  return {
+    subject: `Your account is ready | ${BRAND.name}`,
+    text: `Hello ${name},\n\nYour identity has been verified and your account is ready (reference ${reference}).\n\nYour login details:\nE-mail: ${email}\nPassword: ${password}\n${login ? `\nSign in: ${login}\n` : ''}\nPlease change this password after you first sign in, and never share it with anyone.\n\n${BRAND.name}`,
+    html: layout(
+      'Your account is ready',
+      `<p>Hello ${esc(name)},</p><p>Your identity has been verified and your account is ready.</p>
+<p style="margin:18px 0;padding:14px 16px;background:#f6eee4;border-radius:10px;line-height:1.8">E-mail: <strong>${esc(email)}</strong><br>Password: <strong style="font-family:Consolas,monospace">${esc(password)}</strong><br>Reference: ${esc(reference)}</p>
+${login ? `<p><a href="${esc(login)}" style="display:inline-block;padding:12px 22px;background:#293b93;color:#fff;border-radius:10px;text-decoration:none;font-weight:bold">Sign in</a></p>` : ''}
+<p>Please change this password after you first sign in, and never share it with anyone.</p>`
+    )
+  };
+}

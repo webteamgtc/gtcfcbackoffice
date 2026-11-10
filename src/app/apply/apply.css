@@ -327,6 +327,12 @@
 .dial-pick:has(select:focus-visible) { outline: 3px solid rgba(41, 59, 147, 0.35); outline-offset: 2px; border-radius: 6px; }
 .control .code-btn { margin-inline-start: 8px; }
 
+/* Sumsub outcome pages (src/app/success, src/app/failed) */
+.result-bad .apply-success-icon { background: var(--bad-bg); color: var(--bad); box-shadow: 0 0 0 10px rgba(180, 35, 35, 0.06); }
+.result-next { display: flex; flex-direction: column; gap: 6px; padding-top: 22px; border-top: 1px solid var(--line); }
+.result-next h3 { margin: 0; font-size: 18px; }
+.result-next p { margin: 0; font-size: 15px; color: var(--muted); overflow-wrap: anywhere; }
+.result-next a { color: var(--brand); font-weight: 600; }
 /* ============================================================ design polish (card, fields, buttons, trust row) */
 
 /* the card: more air, layered shadow, a thin brand → gold line on top */

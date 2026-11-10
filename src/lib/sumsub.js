@@ -15,15 +15,14 @@ export const SUMSUB_LEVEL = process.env.SUMSUB_LEVEL_NAME || 'CAT_5_ID_POA';
 
 export const sumsubConfigured = () => Boolean(process.env.SUMSUB_APP_TOKEN && process.env.SUMSUB_SECRET_KEY);
 
-async function request(method, path, body) {
+function signedFetch(method, path, payload = '', accept = 'application/json') {
   if (!sumsubConfigured()) throw new Error('Sumsub is not configured (SUMSUB_APP_TOKEN / SUMSUB_SECRET_KEY)');
   const ts = Math.floor(Date.now() / 1000).toString();
-  const payload = body === undefined ? '' : JSON.stringify(body);
   const sig = createHmac('sha256', process.env.SUMSUB_SECRET_KEY).update(ts + method + path + payload).digest('hex');
-  const res = await fetch(BASE + path, {
+  return fetch(BASE + path, {
     method,
     headers: {
-      Accept: 'application/json',
+      Accept: accept,
       ...(payload ? { 'Content-Type': 'application/json' } : {}),
       'X-App-Token': process.env.SUMSUB_APP_TOKEN,
       'X-App-Access-Ts': ts,
@@ -32,6 +31,10 @@ async function request(method, path, body) {
     body: payload || undefined,
     cache: 'no-store'
   });
+}
+
+async function request(method, path, body) {
+  const res = await signedFetch(method, path, body === undefined ? '' : JSON.stringify(body));
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     const err = new Error(`Sumsub ${method} ${path} → ${res.status}: ${data?.description ?? 'request failed'}`);
@@ -62,7 +65,21 @@ export async function getApplicantByUserId(userId) {
   }
 }
 
-const DIGEST_ALGS = { HMAC_SHA1_HEX: 'sha1', HMAC_SHA256_HEX: 'sha256', HMAC_SHA512_HEX: 'sha512' };
+/** Every file the applicant uploaded: [{ id, idDocDef: { idDocType, idDocSubType, country }, fileMetadata, reviewResult, deactivated }]. */
+export async function getApplicantFiles(applicantId) {
+  const { items = [] } = await request('GET', `/resources/applicants/${encodeURIComponent(applicantId)}/metadata/resources`);
+  return items;
+}
+
+/** One uploaded file (image or PDF) → { buffer, contentType }. `inspectionId` comes with the applicant. */
+export async function downloadApplicantFile(inspectionId, imageId) {
+  const path = `/resources/inspections/${encodeURIComponent(inspectionId)}/resources/${encodeURIComponent(imageId)}`;
+  const res = await signedFetch('GET', path, '', '*/*');
+  if (!res.ok) throw new Error(`Sumsub GET ${path} → ${res.status}`);
+  return { buffer: Buffer.from(await res.arrayBuffer()), contentType: (res.headers.get('content-type') ?? '').split(';')[0].trim() };
+}
+
+const DIGEST_ALGS ={ HMAC_SHA1_HEX: 'sha1', HMAC_SHA256_HEX: 'sha256', HMAC_SHA512_HEX: 'sha512' };
 
 /** Checks a webhook's X-Payload-Digest: HMAC of the raw body (bytes, not re-serialised JSON) with the webhook secret. */
 export function verifyWebhook(rawBody, digest, alg = 'HMAC_SHA256_HEX') {
