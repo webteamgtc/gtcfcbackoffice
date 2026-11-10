@@ -37,9 +37,20 @@ export function requirementState(req, documents) {
   return { ...req, status: latest?.sumsubStatus ?? 'not_started', latest };
 }
 
-/** The whole journey: per-requirement state, steps for a tracker, overall progress and the next action. */
+// Sumsub's decision (user.verificationStatus, src/lib/user.js) → the status of both requirements
+const FROM_SUMSUB = { approved: 'approved', pending: 'pending', rejected: 'rejected', resubmit: 'rejected' };
+
+/**
+ * The whole journey: per-requirement state, steps for a tracker, overall progress and the next action.
+ * The Sumsub verification (/apply) decides when it has started; before that, the dashboard's own uploads.
+ * `next.href` / `next.action`: where the client continues (the verification, or the outcome page).
+ */
 export function journey(user, documents) {
-  const reqs = REQUIREMENTS.map((r) => requirementState(r, documents));
+  const sumsub = FROM_SUMSUB[user.verificationStatus];
+  const reqs = REQUIREMENTS.map((r) => {
+    const own = requirementState(r, documents);
+    return sumsub ? { ...own, status: sumsub } : own;
+  });
   const uploaded = reqs.filter((r) => r.status !== 'not_started').length;
   const approved = reqs.filter((r) => r.status === 'approved').length;
   const verified = approved === reqs.length;
@@ -60,7 +71,15 @@ export function journey(user, documents) {
 
   let next;
   if (verified)
-    next = { tone: 'ok', title: 'You’re verified', text: 'Your identity and address are confirmed. Our team will be in touch about the next steps.' };
+    next = { tone: 'ok', title: 'You’re verified', text: 'Your identity and address are confirmed.', href: '/success', action: 'View your account' };
+  else if (user.verificationStatus === 'rejected')
+    next = { tone: 'bad', title: 'We could not verify your identity', text: 'Our team will contact you by email about the next steps.', href: '/failed', action: 'See details' };
+  else if (user.verificationStatus === 'resubmit')
+    next = { tone: 'bad', title: 'Some documents need to be uploaded again', text: 'Please follow the instructions in the verification to upload them again.', href: '/apply', action: 'Continue verification' };
+  else if (sumsub === 'pending')
+    next = { tone: 'warn', title: 'We’re checking your documents', text: 'You don’t need to do anything right now. This usually takes less than a minute.', href: '/apply', action: 'View verification' };
+  else if (!documents.length)
+    next = { tone: 'brand', title: 'Verify your identity', text: 'Photograph your identity document, add your proof of address and take a quick selfie. It takes about 3 minutes.', href: '/apply', action: 'Start verification' };
   else if (todo?.status === 'rejected')
     next = { tone: 'bad', title: `Upload a new ${todo.noun}`, text: `Your last ${todo.noun} could not be accepted. ${todo.hint}`, req: todo };
   else if (todo) next = { tone: 'brand', title: `Upload your ${todo.noun}`, text: todo.hint, req: todo };
