@@ -135,18 +135,19 @@ export async function buildRequest(app, applicant, password) {
   const tin = answers.pick('tin') || (app.tinEncrypted ? decryptField(app.tinEncrypted) : '') || `Not available (${answers.pick('noTinReason') || 'not provided'})`;
   const street = address.formattedAddress || [address.flatNumber, address.buildingNumber, address.street, address.subStreet, address.town, address.state].filter(Boolean).join(', ');
   const dial = countryByCode(app.phoneCountry || app.country)?.dial;
+  // the MAX agent / IB every account is opened under (required; MAX refuses an unknown one); differs per MAX environment
+  const invitationCode = cut(process.env.CAT5_INVITATION_CODE, 64);
+  if (!invitationCode) throw new Error('CAT5_INVITATION_CODE is not set');
 
   return {
     external_customer_id: app.applicationReference,
+    invitation_code: invitationCode,
     email,
     password,
     first_name: cut(info.firstNameEn || app.firstName, 49),
     last_name: cut(info.lastNameEn || app.lastName, 49),
     phone: String(app.phone).replace(/\D/g, '').replace(/^0+/, ''),
     d_code: dial ? `+${dial}` : '',
-    // referral (agent / IB) the account is opened under: the client's partner code from the link (?ref, ?code, …),
-    // otherwise CAT5_REFERRAL_CODE
-    // invitation_code: cut(app.partnerCode || process.env.CAT5_REFERRAL_CODE, 64),
     kyc: {
       identity: cut(idDoc?.number || decryptField(app.idNumberEncrypted), 50),
       id_type: ID_TYPES[idDoc?.idDocType ?? front.idDocDef.idDocType],

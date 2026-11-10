@@ -52,6 +52,7 @@ export function Ring({ value, size = 76, label }) {
 }
 
 const DETAIL_ROWS = [
+  ['reference', 'Application reference', FileIcon],
   ['firstName', 'First name', UserIcon],
   ['lastName', 'Last name', UserIcon],
   ['email', 'Email', MailIcon],
@@ -170,7 +171,7 @@ export function Shell({ user, fullName, children }) {
         <span>
           © {new Date().getFullYear()} {BRAND.legalName}
         </span>
-        <span>Your documents are uploaded over an encrypted connection.</span>
+        <span>Your information is encrypted and kept confidential.</span>
       </footer>
       <nav className="tabbar" aria-label="Dashboard sections">
         {NAV.map(([href, label, Icon], i) => (
@@ -211,8 +212,11 @@ export function Activity({ documents }) {
   );
 }
 
-/** A premium document tile: big icon, status band, the latest file, and the upload form when it is needed. */
-export function DocTile({ req, index }) {
+/**
+ * A premium document tile: big icon, status band, the latest file, and what to do when something is needed: a link to
+ * the identity verification (`verifyHref`, the documents go to Sumsub there), otherwise the dashboard's own upload form.
+ */
+export function DocTile({ req, index, verifyHref }) {
   const Icon = REQ_ICONS[req.key];
   const needsUpload = req.status === 'not_started' || req.status === 'rejected';
   return (
@@ -244,9 +248,14 @@ export function DocTile({ req, index }) {
       {req.status === 'rejected' && <p className="req-alert">This document could not be accepted. Please upload a clear, complete and valid copy.</p>}
       {req.status === 'pending' && <p className="tile-note">We’re checking this document. You don’t need to do anything.</p>}
       {req.status === 'approved' && <p className="tile-note ok">This document is confirmed.</p>}
-      {needsUpload && (
-        <DocumentUpload id={`tile-${req.key}`} types={req.types} submitLabel={req.status === 'rejected' ? 'Upload a new copy' : `Upload ${req.noun}`} />
-      )}
+      {needsUpload &&
+        (verifyHref ? (
+          <a className="btn" href={verifyHref}>
+            {req.status === 'rejected' ? 'Upload a new copy' : `Upload ${req.noun}`} <ArrowRightIcon />
+          </a>
+        ) : (
+          <DocumentUpload id={`tile-${req.key}`} types={req.types} submitLabel={req.status === 'rejected' ? 'Upload a new copy' : `Upload ${req.noun}`} />
+        ))}
     </article>
   );
 }

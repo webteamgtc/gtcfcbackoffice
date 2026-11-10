@@ -116,9 +116,11 @@ export const EMPTY_APPLICATION = {
   nationality: '',
   partnerCode: '', // from the link (?code, ?ref, …), not shown
   draftId: '', // groups the files uploaded before the application is saved
-  // contact details: the mobile is verified with a WhatsApp code (POST /api/send-phone-otp); the e-mail is not verified
+  // contact details: the mobile is verified with a WhatsApp code (POST /api/send-phone-otp); the e-mail only when it
+  // already has an application (the client proves it is theirs and continues with it)
   email: '',
-  // emailCode: '', // e-mail code (POST /api/otp-smtp), switched off: only the WhatsApp code is asked for
+  emailCode: '', // e-mail code (POST /api/otp-smtp)
+  emailToken: '', // signed token returned with the e-mail code
   phoneCountry: '', // dialling code of the mobile number, as a country code (starts as the country of residence)
   phone: '', // national number
   phoneCode: '',
@@ -189,7 +191,7 @@ export const EMPTY_APPLICATION = {
 // which step each field belongs to — the form marks a step's fields as touched on "Next"
 export const STEP_FIELDS = {
   personal: ['lastName', 'firstName', 'dateOfBirth', 'country', 'nationality'],
-  contact: ['email', /* 'emailCode', */ 'phoneCountry', 'phone', 'phoneCode', 'idNumber'],
+  contact: ['email', 'emailCode', 'phoneCountry', 'phone', 'phoneCode', 'idNumber'],
   identity: ['nationality', 'idType', 'idFront', 'idBack', 'idLastName', 'idFirstName', 'idNumber'],
   address: ['poaFile', 'poaCountry', 'postalCode', 'address', 'proofDate'],
   questionnaire: [
@@ -208,7 +210,7 @@ export const STEP_FIELDS = {
 /** Index of the first step that has one of `errors`' fields (-1 when none). */
 export const firstStepWithError = (errors) => STEPS.findIndex((s) => STEP_FIELDS[s.key].some((k) => errors[k]));
 
-const LIMITS = { phoneToken: 2000, regAddress: 300, repAddress: 300, address: 300, idNumber: 40, postalCode: 20, tin: 40, employer: 120, previousEmployment: 120, industryOther: 120, occupationOther: 120 };
+const LIMITS = { phoneToken: 2000, emailToken: 2000, regAddress: 300, repAddress: 300, address: 300, idNumber: 40, postalCode: 20, tin: 40, employer: 120, previousEmployment: 120, industryOther: 120, occupationOther: 120 };
 
 /** Trimmed copy of the values (from a plain object or FormData). */
 export function readApplication(src) {
@@ -223,7 +225,8 @@ export function readApplication(src) {
   for (const k of ['country', 'nationality', 'phoneCountry', 'poaCountry', 'regCountry', 'repNationality']) out[k] = out[k].slice(0, 2).toUpperCase();
   out.email = out.email.toLowerCase();
   out.phone = out.phone.replace(/\D/g, '').replace(/^0+/, ''); // national number without a leading trunk 0
-  out.phoneCode = out.phoneCode.replace(/\D/g, '').slice(0, 6); // (and emailCode, if switched back on)
+  out.phoneCode = out.phoneCode.replace(/\D/g, '').slice(0, 6);
+  out.emailCode = out.emailCode.replace(/\D/g, '').slice(0, 6);
   if (!ACCOUNT_TYPES.includes(out.accountType)) out.accountType = 'individual';
   for (const k of ['secondaryPhone', 'repPhone']) out[k] = out[k].replace(/[^\d+\s-]/g, '');
   out.repEmail = out.repEmail.toLowerCase();
@@ -303,8 +306,7 @@ export function validateStep(key, v) {
   if (key === 'contact') {
     const mail = emailError(v.email);
     if (mail) e.email = mail;
-    // e-mail code switched off (only the WhatsApp code is asked for):
-    // if (!/^\d{6}$/.test(v.emailCode)) e.emailCode = v.emailCode ? 'The code has 6 digits.' : 'Enter the 6-digit code we emailed you.';
+    // e-mail code: only asked for when the e-mail already has an application, which the server checks (actions/application.js)
     if (!countryByCode(v.phoneCountry)) e.phoneCountry = 'Choose the country code.';
     const digits = v.phone.replace(/\D/g, '');
     if (!digits) e.phone = 'Please enter your mobile number.';

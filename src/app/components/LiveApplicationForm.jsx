@@ -6,8 +6,9 @@
  *   1. Personal Information: surname, given name, date of birth, country of residence, nationality.
  *   Contact details (after 1): email, mobile verified with a 6-digit WhatsApp code (Infobip, POST /api/send-phone-otp),
  *   and the ID number. The send route returns a signed token (no database) that goes back with the code; Continue checks
- *   it on the server (checkContact), submit uses it up, so only a verified mobile is saved. (An e-mail code via
- *   POST /api/otp-smtp is built in but switched off: see the commented lines.)
+ *   it on the server (checkContact), submit uses it up, so only a verified mobile is saved. When the e-mail already has
+ *   an application, checkContact says so (`existing`) and the client also confirms the e-mail with a code (POST
+ *   /api/otp-smtp); they then continue, and submit updates that application instead of creating a new one.
  *   2. Identity Information: nationality, document type, front and back photo, name and number as on the document.
  *   3. Proof of Address: utility bill / bank statement file, country, postal code, address, proof date.
  *   Files upload as soon as they are picked (uploadApplicationFile; large photos are shrunk first) and are linked to the
@@ -26,7 +27,7 @@ import { useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import dynamic from 'next/dynamic';
 import { AnimatePresence, MotionConfig, motion, useSpring, useTransform } from 'motion/react';
 import Logo from './Logo';
-import { checkContact, emailAvailable, submitApplication, uploadApplicationFile } from '@/app/actions/application';
+import { checkContact, submitApplication, uploadApplicationFile } from '@/app/actions/application';
 import {
   AGREEMENT_TEXT, EMPTY_APPLICATION, EMPTY_SHAREHOLDER, e164, ID_TYPES, MAX_SHAREHOLDERS, OPTIONS, PEP_TEXT, STEPS, STEP_FIELDS, firstStepWithError, isCorporate, needsBackSide, stepsFor,
   validateAll, validateStep
@@ -694,6 +695,7 @@ export default function LiveApplicationForm() {
 
   // per channel: sending (request in flight), sent (a code went out), cooldown (seconds before "Resend"), note (message)
   const [codes, setCodes] = useState({ email: {}, phone: {} });
+  const [emailExists, setEmailExists] = useState(false); // the e-mail already has an application: confirm it with a code
   const setCode = (ch, patch) => setCodes((c) => ({ ...c, [ch]: { ...c[ch], ...patch } }));
   const cooling = codes.email.cooldown > 0 || codes.phone.cooldown > 0;
   useEffect(() => {
@@ -708,6 +710,10 @@ export default function LiveApplicationForm() {
   // a new address / number needs a new code (and drops the token of the old one)
   const changeContact = (k, value, ch) => {
     setValue(k, value);
+    if (k === 'email') {
+      setEmailExists(false);
+      clearServer('emailCode');
+    }
     if (codes[ch].sent || codes[ch].note) setCode(ch, { sent: false, note: null });
     if (values[`${ch}Code`]) setValue(`${ch}Code`, '');
     if (values[`${ch}Token`]) setValue(`${ch}Token`, '');
@@ -722,13 +728,6 @@ export default function LiveApplicationForm() {
     setCode(ch, { sending: true, note: null });
     let res;
     try {
-      if (ch === 'email') {
-        const free = await emailAvailable(values.email);
-        if (!free?.ok) {
-          setCode(ch, { sending: false, note: { tone: 'bad', text: free?.error ?? 'We could not send the code. Please try again.' } });
-          return;
-        }
-      }
       const r = await fetch(ch === 'email' ? '/api/otp-smtp' : '/api/send-phone-otp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -748,6 +747,7 @@ export default function LiveApplicationForm() {
       setValue(`${ch}Token`, res.token ?? '');
       setCode(ch, { sending: false, sent: true, cooldown: RESEND_SECONDS, note: { tone: 'ok', text: ch === 'email' ? `Code sent to ${where}. It expires in 10 minutes.` : `Code sent on WhatsApp to ${where}. It expires in 10 minutes.` } });
       clearServer(k);
+      clearServer(`${ch}Code`);
       document.getElementById(`ap-${ch}Code`)?.focus();
     } else if (res?.reason === 'wait') {
       setCode(ch, { sending: false, cooldown: res.retryIn ?? RESEND_SECONDS, note: { tone: 'bad', text: 'A code was just sent. Please check it, or wait before requesting a new one.' } });
@@ -815,14 +815,21 @@ export default function LiveApplicationForm() {
               autoComplete="email"
               aria-invalid={Boolean(err('email'))}
             />
-            {/* e-mail code switched off (only the WhatsApp code is asked for): {sendButton('email')} */}
+            {emailExists && sendButton('email')}
           </>
         )}
       </Field>
-      {/* e-mail code switched off:
-      {codeField('email', 'Email verification code')}
-      {note('email')}
-      */}
+      {emailExists && (
+        <>
+          {!codes.email.sent && (
+            <p className="note warn-note apply-wide ap-pop" role="status">
+              <AlertIcon /> This email already has an application. Send a code to it and enter the code to continue with that application.
+            </p>
+          )}
+          {codeField('email', 'Email verification code')}
+          {note('email')}
+        </>
+      )}
 
       <Field id="ap-phone" label="Mobile number (WhatsApp)" required error={err('phone') ?? err('phoneCountry')}>
         <div className={`control${err('phone') || err('phoneCountry') ? ' is-bad' : ''}`} dir="ltr">
@@ -890,6 +897,7 @@ export default function LiveApplicationForm() {
         } catch {
           res = { error: 'Could not reach the server. Please check your connection and try again.' };
         }
+        if (res?.existing != null) setEmailExists(res.existing);
         if (res?.ok) {
           setServerErrors({});
           go(screen + 1);
@@ -921,6 +929,7 @@ export default function LiveApplicationForm() {
         return;
       }
       setServerErrors(res?.errors ?? {});
+      if (res?.existing != null) setEmailExists(res.existing);
       const back = res?.step ?? (res?.errors ? firstStepWithError(res.errors) : -1);
       if (back >= 0 && back !== stepIndex) {
         let target = firstScreenOf(back);
@@ -1341,6 +1350,11 @@ export default function LiveApplicationForm() {
               </motion.div>
             </AnimatePresence>
           </div>
+          {!done && (
+            <p className="auth-secure">
+              Already applied? <a href="/login">Check your application status</a>
+            </p>
+          )}
           <p className="auth-foot">
             © {year} {BRAND.legalName}
           </p>

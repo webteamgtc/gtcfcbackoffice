@@ -12,8 +12,10 @@ import { FILE_FIELDS, STEPS, e164, emailError, firstStepWithError, isCorporate, 
 /**
  * Client application, the KYC journey (src/app/components/LiveApplicationForm.jsx, fields in src/lib/application.js).
  * Saved in MySQL (Alibaba Cloud RDS, src/lib/db.js; tables in db/schema.sql, `npm run db:migrate`):
- *   emailAvailable        → is the e-mail still free? (was used before sending an e-mail code; that code is switched off)
- *   checkContact          → "Contact details" step: e-mail free, and the WhatsApp code correct (not used up yet)
+ *   emailAvailable        → is the e-mail still free?
+ *   checkContact          → "Contact details" step: the WhatsApp code correct (not used up yet), and, when the e-mail
+ *                           already has an application, the e-mail code too (→ { errors, existing: true } until it is):
+ *                           the client proves the e-mail is theirs and continues with that application
  *   uploadApplicationFile → stores one picked file (business license; ID photos / proof of address when those steps are
  *                           shown) in `application_files` under the form's draft id, before the client exists; picking
  *                           again replaces it. → { ok, id } / { error }
@@ -21,7 +23,9 @@ import { FILE_FIELDS, STEPS, e164, emailError, firstStepWithError, isCorporate, 
  *                           `client_applications` (ID number and TIN encrypted; columns of steps Sumsub collects stay
  *                           empty; a corporate client also `company`), links the files to it, and signs the client in
  *                           (session cookie) for the Sumsub verification that follows. Uses up the WhatsApp code, so the
- *                           mobile saved is the one the client proved they own.
+ *                           mobile saved is the one the client proved they own. For an e-mail that already has an
+ *                           application, the e-mail code is used up too and that application is updated instead (same
+ *                           id and reference, so its Sumsub verification and MAX account carry on).
  *                           → { ok, reference } or { step (0-based), errors } / { error }
  */
 
@@ -32,25 +36,33 @@ const DRAFT_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$
 
 const STEP_INDEX = Object.fromEntries(STEPS.map((x, i) => [x.key, i]));
 const TAKEN = 'An application with this email already exists.';
+const CONFIRM_EMAIL = 'Send a code to this email first.'; // the form explains why (the e-mail already has an application)
 const CODE_ERRORS = {
   email: { invalid: 'That code is not correct. Please check the email we sent you.', expired: 'This code has expired. Please request a new one.' },
   phone: { invalid: 'That code is not correct. Please check the WhatsApp message we sent you.', expired: 'This code has expired. Please request a new one.' }
 };
-const emailTaken = async (email) => Boolean(await queryOne('SELECT id FROM client_applications WHERE email = ?', [email]));
+const existingApplication = (email) => queryOne('SELECT id, applicationReference FROM client_applications WHERE email = ?', [email]);
+const emailTaken = async (email) => Boolean(await existingApplication(email));
 
 // e.g. "GTC-7K2M9QXA": 8 characters without look-alikes (0/O, 1/I/L), random so references don't reveal volumes
 const REF_CHARS = '23456789ABCDEFGHJKMNPQRSTUVWXYZ';
 const newReference = () => `GTC-${Array.from(randomBytes(8), (b) => REF_CHARS[b % REF_CHARS.length]).join('')}`;
 
 /**
- * Checks the WhatsApp code of the contact step against its signed token (src/lib/otpStore.js, no database).
- * `consume` uses the token up (only on submit). → field errors
+ * Checks the codes of the contact step against their signed tokens (src/lib/otpStore.js, no database): the WhatsApp code,
+ * and the e-mail code when `existing` (the e-mail already has an application). `consume` uses them up (only on submit).
+ * → field errors
  */
-async function checkCodes(v, consume) {
+async function checkCodes(v, consume, existing) {
   const errors = {};
-  // e-mail code switched off (only the WhatsApp code is asked for); with it back on, the form also sends emailCode / emailToken:
-  // const mail = await verifyOtp(v.email, v.emailCode, v.emailToken, { consume });
-  // if (!mail.success) errors.emailCode = CODE_ERRORS.email[mail.reason];
+  if (existing) {
+    if (!v.emailToken) errors.emailCode = CONFIRM_EMAIL;
+    else if (!/^\d{6}$/.test(v.emailCode)) errors.emailCode = v.emailCode ? 'The code has 6 digits.' : 'Enter the 6-digit code we emailed you.';
+    else {
+      const mail = await verifyOtp(v.email, v.emailCode, v.emailToken, { consume });
+      if (!mail.success) errors.emailCode = CODE_ERRORS.email[mail.reason];
+    }
+  }
   const phone = await verifyOtp(phoneKey(e164(v.phoneCountry, v.phone)), v.phoneCode, v.phoneToken, { consume });
   if (!phone.success) errors.phoneCode = CODE_ERRORS.phone[phone.reason];
   return errors;
@@ -73,9 +85,9 @@ export async function checkContact(input) {
   const errors = validateStep('contact', v);
   if (Object.keys(errors).length) return { errors };
   try {
-    if (await emailTaken(v.email)) return { errors: { email: TAKEN } };
-    const codeErrors = await checkCodes(v, false);
-    return Object.keys(codeErrors).length ? { errors: codeErrors } : { ok: true };
+    const existing = Boolean(await existingApplication(v.email));
+    const codeErrors = await checkCodes(v, false, existing);
+    return Object.keys(codeErrors).length ? { errors: codeErrors, existing } : { ok: true, existing };
   } catch (err) {
     console.error('[application] contact check:', err);
     return { error: 'Could not reach the server. Please try again.' };
@@ -120,11 +132,11 @@ export async function submitApplication(input) {
   let id;
   let reference;
   try {
-    // the contact step: e-mail still free, WhatsApp code correct; it is used up here
+    // the contact step: WhatsApp code correct, and the e-mail code when the e-mail already has an application; used up here
     const contactStep = STEP_INDEX.contact;
-    if (await emailTaken(v.email)) return { step: contactStep, errors: { email: TAKEN } };
-    const codeErrors = await checkCodes(v, true);
-    if (Object.keys(codeErrors).length) return { step: contactStep, errors: codeErrors };
+    const existing = await existingApplication(v.email);
+    const codeErrors = await checkCodes(v, true, Boolean(existing));
+    if (Object.keys(codeErrors).length) return { step: contactStep, errors: codeErrors, existing: Boolean(existing) };
 
     // every uploaded file must still be there, belong to this draft and not to another client
     const missing = {};
@@ -147,9 +159,9 @@ export async function submitApplication(input) {
       country: v.country,
       nationality: v.nationality,
       partnerCode: v.partnerCode || null,
-      // contact details (e-mail not verified: no e-mail code at the moment; the mobile is verified by WhatsApp)
+      // contact details (the mobile is verified by WhatsApp; the e-mail only when it already had an application)
       email: v.email,
-      emailVerifiedAt: null,
+      emailVerifiedAt: existing ? now : null,
       passwordHash: null, // no password in the form yet
       phone: v.phone,
       phoneCountry: v.phoneCountry,
@@ -213,17 +225,23 @@ export async function submitApplication(input) {
         : null
     };
     const cols = Object.keys(row);
-    const insert = `INSERT INTO client_applications (applicationReference, ${cols.join(', ')}) VALUES (?, ${cols.map(() => '?').join(', ')})`;
-
-    // a clash on the random reference is very unlikely; try a new one a few times
-    for (let attempt = 0; ; attempt++) {
-      reference = newReference();
-      try {
-        ({ insertId: id } = await query(insert, [reference, ...Object.values(row)]));
-        break;
-      } catch (err) {
-        if (isDuplicate(err) && /reference/i.test(err.sqlMessage ?? '') && attempt < 4) continue;
-        throw err;
+    if (existing) {
+      // the client proved the e-mail is theirs: their application takes the new answers, its uploads are replaced
+      ({ id, applicationReference: reference } = existing);
+      await query(`UPDATE client_applications SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE id = ?`, [...Object.values(row), id]);
+      if (wanted.length) await query(`DELETE FROM application_files WHERE application_id = ? AND field IN (${wanted.map(() => '?').join(', ')})`, [id, ...wanted]);
+    } else {
+      const insert = `INSERT INTO client_applications (applicationReference, ${cols.join(', ')}) VALUES (?, ${cols.map(() => '?').join(', ')})`;
+      // a clash on the random reference is very unlikely; try a new one a few times
+      for (let attempt = 0; ; attempt++) {
+        reference = newReference();
+        try {
+          ({ insertId: id } = await query(insert, [reference, ...Object.values(row)]));
+          break;
+        } catch (err) {
+          if (isDuplicate(err) && /reference/i.test(err.sqlMessage ?? '') && attempt < 4) continue;
+          throw err;
+        }
       }
     }
 

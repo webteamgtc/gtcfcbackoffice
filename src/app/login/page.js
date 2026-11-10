@@ -1,31 +1,42 @@
+import Link from 'next/link';
+import { redirect } from 'next/navigation';
+import { connection } from 'next/server';
 import Logo from '@/app/components/Logo';
-import { LockIcon, ShieldIcon, UploadIcon, UserIcon } from '@/app/components/icons';
+import { LockIcon, MailIcon, ShieldIcon, UserIcon } from '@/app/components/icons';
 import { BRAND } from '@/lib/brand';
+import { getCurrentUser } from '@/lib/user';
 import LoginForm from './LoginForm';
 
-export const metadata = { title: `Sign in | ${BRAND.name}` };
+export const metadata = { title: `Application status | ${BRAND.name}` };
 
 /**
- * Sign-in: the form beside a navy panel with the three steps of the portal.
+ * Application status: a client who has applied signs in with their e-mail and a code sent to it (no password), then
+ * their page ("/", src/app/page.js) shows where they are: verification, outcome and their account.
  * Wording stays within the CAT 5 licence: a consultancy client portal, no trading terms.
  */
 const HOW = [
-  { Icon: UserIcon, title: 'Sign in', text: 'Use your registered email and password.' },
-  { Icon: UploadIcon, title: 'Upload your documents', text: 'An identity document and a proof of address.' },
-  { Icon: ShieldIcon, title: 'We review them', text: 'Track the status here; we’ll update you when it’s done.' }
+  { Icon: MailIcon, title: 'Enter your email', text: 'The email you used for your application.' },
+  { Icon: ShieldIcon, title: 'Confirm the code', text: 'We email you a 6-digit code to keep your application private.' },
+  { Icon: UserIcon, title: 'See your status', text: 'Continue your verification, or see the outcome and your account.' }
 ];
 
-export default function LoginPage() {
+export default async function LoginPage() {
+  await connection(); // per request: reads the session cookie
+  if (await getCurrentUser().catch(() => null)) redirect('/');
+
   return (
     <main className="auth">
       <section className="auth-form-side">
         <div className="auth-card">
           <Logo variant="main" width={164} priority className="auth-logo" />
-          <h1>Welcome back</h1>
-          <p className="auth-sub">Sign in to your client portal.</p>
+          <h1>Check your application</h1>
+          <p className="auth-sub">Enter your email and we’ll send you a code to see your application status.</p>
           <LoginForm />
           <p className="auth-secure">
             <LockIcon /> Your connection is encrypted.
+          </p>
+          <p className="auth-secure">
+            Haven’t applied yet? <Link href="/">Start your application</Link>
           </p>
         </div>
         <p className="auth-foot">
@@ -34,9 +45,9 @@ export default function LoginPage() {
       </section>
       <aside className="auth-brand-side">
         <div className="auth-brand-inner">
-          <p className="auth-kicker">Client portal</p>
+          <p className="auth-kicker">Client application</p>
           <h2>
-            Your verification, <span>simple and secure</span>.
+            Your application, <span>one code away</span>.
           </h2>
           <ol className="auth-how">
             {HOW.map(({ Icon, title, text }, i) => (
