@@ -40,7 +40,7 @@ if ((await hasColumn('client_documents', 'content')) && !(await hasColumn('clien
 // client_applications: the 3-step form (personal → contact → agreement) leaves the Sumsub-collected columns and the
 // password empty, so they become optional; the mobile gets its own country code and verification time
 const OPTIONAL = [
-  'emailVerifiedAt', 'passwordHash', 'idType', 'idLastName', 'idFirstName', 'poaCountry', 'postalCode', 'address', 'education', 'employment',
+  'emailVerifiedAt', 'passwordHash', 'idNumberEncrypted', 'idType', 'idLastName', 'idFirstName', 'poaCountry', 'postalCode', 'address', 'education', 'employment',
   'industry', 'occupation', 'experienceYears', 'income', 'sourceOfFunds', 'investmentExperience', 'marketExperience', 'usCitizen', 'pep'
 ];
 const [colInfo] = await conn.query(

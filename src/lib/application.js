@@ -191,7 +191,7 @@ export const EMPTY_APPLICATION = {
 // which step each field belongs to — the form marks a step's fields as touched on "Next"
 export const STEP_FIELDS = {
   personal: ['lastName', 'firstName', 'dateOfBirth', 'country', 'nationality'],
-  contact: ['email', 'emailCode', 'phoneCountry', 'phone', 'phoneCode', 'idNumber'],
+  contact: ['email', 'emailCode', 'phoneCountry', 'phone', 'phoneCode'],
   identity: ['nationality', 'idType', 'idFront', 'idBack', 'idLastName', 'idFirstName', 'idNumber'],
   address: ['poaFile', 'poaCountry', 'postalCode', 'address', 'proofDate'],
   questionnaire: [
@@ -313,8 +313,6 @@ export function validateStep(key, v) {
     else if (digits.length < 5 || digits.length > 14) e.phone = 'Please enter a valid mobile number.';
     if (!v.phoneToken) e.phoneCode = 'Send the code to your WhatsApp first.';
     else if (!/^\d{6}$/.test(v.phoneCode)) e.phoneCode = v.phoneCode ? 'The code has 6 digits.' : 'Enter the 6-digit code we sent on WhatsApp.';
-    if (!v.idNumber.trim()) e.idNumber = 'Please enter your ID number.';
-    else if (!/^[A-Za-z0-9 -]{3,40}$/.test(v.idNumber.trim())) e.idNumber = 'Use letters, numbers and dashes only.';
   }
   if (key === 'identity') {
     { const m = countryError(v.nationality, 'Please choose your nationality.'); if (m) e.nationality = m; }

@@ -110,6 +110,7 @@ export async function buildRequest(app, applicant, password) {
   const front = idFiles.find((f) => f.idDocDef.idDocSubType !== 'BACK_SIDE');
   const back = idFiles.find((f) => f.idDocDef.idDocSubType === 'BACK_SIDE') ?? front; // a passport has one side
   if (!front) throw new Blocked('Sumsub has no accepted identity document image for this client.');
+  if (!idDoc?.number && !app.idNumberEncrypted) throw new Blocked('Sumsub has no document number for this client.');
 
   const poaFiles = files.filter((f) => POA_TYPES.includes(f.idDocDef?.idDocType)).slice(0, 15);
   const address = (info.addresses ?? applicant.fixedInfo?.addresses ?? [])[0];
@@ -149,7 +150,7 @@ export async function buildRequest(app, applicant, password) {
     phone: String(app.phone).replace(/\D/g, '').replace(/^0+/, ''),
     d_code: dial ? `+${dial}` : '',
     kyc: {
-      identity: cut(idDoc?.number || decryptField(app.idNumberEncrypted), 50),
+      identity: cut(idDoc?.number || (app.idNumberEncrypted ? decryptField(app.idNumberEncrypted) : ''), 50),
       id_type: ID_TYPES[idDoc?.idDocType ?? front.idDocDef.idDocType],
       country: address.country || alpha3(app.country),
       nationality: info.nationality || alpha3(app.nationality),

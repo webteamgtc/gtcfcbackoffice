@@ -4,8 +4,8 @@
  * Client application: the personal KYC journey from "Current KYC Journey in MAX CRM" (public/…-form.docx), five steps,
  * with exactly the fields of the document:
  *   1. Personal Information: surname, given name, date of birth, country of residence, nationality.
- *   Contact details (after 1): email, mobile verified with a 6-digit WhatsApp code (Infobip, POST /api/send-phone-otp),
- *   and the ID number. The send route returns a signed token (no database) that goes back with the code; Continue checks
+ *   Contact details (after 1): email and mobile, verified with a 6-digit WhatsApp code (Infobip, POST /api/send-phone-otp)
+ *   (the ID number comes from Sumsub's document check). The send route returns a signed token (no database) that goes back with the code; Continue checks
  *   it on the server (checkContact), submit uses it up, so only a verified mobile is saved. When the e-mail already has
  *   an application, checkContact says so (`existing`) and the client also confirms the e-mail with a code (POST
  *   /api/otp-smtp); they then continue, and submit updates that application instead of creating a new one.
@@ -866,7 +866,6 @@ export default function LiveApplicationForm() {
       {codeField('phone', 'WhatsApp verification code')}
       {note('phone')}
 
-      {textField('idNumber', 'ID number', { icon: <IdCardIcon />, placeholder: 'Passport or national ID number', autoComplete: 'off', hint: 'As shown on the identity document you will verify with.' })}
     </div>
   );
 
