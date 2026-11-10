@@ -63,6 +63,7 @@ export default function SumsubVerification({ status: initialStatus = null }) {
     (async () => {
       const res = await getVerificationToken();
       if (cancelled) return;
+      if (res?.demo) return setStatus(res.status); // demo mode: no Sumsub, straight to the outcome page
       if (!res?.token) {
         setError(res?.error ?? 'We could not start the verification.');
         setPhase('error');

@@ -2,6 +2,7 @@ import 'server-only';
 import { query, queryOne } from '@/lib/db';
 import { getSession } from '@/lib/session';
 import { fullPhone } from '@/lib/application';
+import { demoMode } from '@/lib/demo';
 
 /** The signed-in client (a row of client_applications, see db/schema.sql), or null. Never includes the password. */
 export async function getCurrentUser() {
@@ -27,8 +28,9 @@ export async function getCurrentUser() {
     phone: row.phone ? fullPhone(row.phoneCountry || row.country, row.phone) : '',
     partnerCode: row.partnerCode ?? '',
     reference: row.applicationReference ?? '',
-    // Sumsub outcome (client_verifications, src/lib/verification.js); null before verification has started
-    verificationStatus: row.verificationStatus ?? null
+    // Sumsub outcome (client_verifications, src/lib/verification.js); null before verification has started.
+    // Demo mode (src/lib/demo.js): everyone counts as verified
+    verificationStatus: demoMode() ? 'approved' : (row.verificationStatus ?? null)
   };
 }
 

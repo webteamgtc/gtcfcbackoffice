@@ -3,6 +3,7 @@
 import { getCurrentUser } from '@/lib/user';
 import { createSdkToken, sumsubConfigured } from '@/lib/sumsub';
 import { syncFromSumsub } from '@/lib/verification';
+import { demoMode } from '@/lib/demo';
 
 /**
  * Sumsub WebSDK (src/app/components/SumsubVerification.jsx) for the signed-in client — the session is created when the
@@ -13,6 +14,7 @@ import { syncFromSumsub } from '@/lib/verification';
 export async function getVerificationToken() {
   const user = await getCurrentUser();
   if (!user) return { code: 'session', error: 'Your session has expired. Please submit the application again or contact us.' };
+  if (demoMode()) return { demo: true, status: 'approved' }; // no Sumsub: verified straight away (src/lib/demo.js)
   if (!sumsubConfigured()) {
     console.warn('[sumsub] SUMSUB_APP_TOKEN / SUMSUB_SECRET_KEY are not set');
     return { code: 'not_configured', error: 'Identity verification is not available right now. Our team will contact you.' };
@@ -27,6 +29,7 @@ export async function getVerificationToken() {
 
 export async function syncVerification() {
   const user = await getCurrentUser();
+  if (user && demoMode()) return { status: 'approved' };
   if (!user || !sumsubConfigured()) return { status: null };
   try {
     return { status: await syncFromSumsub(user.id) };
