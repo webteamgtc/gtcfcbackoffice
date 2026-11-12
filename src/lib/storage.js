@@ -43,6 +43,7 @@ export async function putObject(key, body, contentType) {
   });
 }
 
+
 /** An object's content (Buffer). */
 export async function getObject(key) {
   const { content } = await client().get(key);
