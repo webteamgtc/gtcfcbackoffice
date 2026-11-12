@@ -6,6 +6,7 @@ import { encryptField } from '@/lib/fieldCrypto';
 import { createSession } from '@/lib/session';
 import { phoneKey, verifyOtp } from '@/lib/otpStore';
 import { BRAND } from '@/lib/brand';
+import { storeSignedAgreements } from '@/lib/signedAgreement';
 import { FILE_FIELDS, STEPS, e164, emailError, firstStepWithError, isCorporate, needsBackSide, readApplication, showsStep, validateAll, validateStep } from '@/lib/application';
 
 
@@ -131,6 +132,7 @@ export async function submitApplication(input) {
   const wanted = Object.keys(FILE_FIELDS).filter((k) => shows(FILE_FIELDS[k].step) && (k !== 'idBack' || needsBackSide(v.idType)));
   let id;
   let reference;
+  let signedAgreements;
   try {
     // the contact step: WhatsApp code correct, and the e-mail code when the e-mail already has an application; used up here
     const contactStep = STEP_INDEX.contact;
@@ -150,6 +152,11 @@ export async function submitApplication(input) {
     const address = shows('address');
     const questionnaire = shows('questionnaire');
     const agreedAt = now.toISOString();
+    // 2.5 (and 2.8) what was signed and when
+    signedAgreements = [
+      ...BRAND.agreements.map((a, i) => ({ title: a.title, url: a.url || null, accepted: Boolean(v[`agreement${i + 1}`]), read: Boolean(v[`agreement${i + 1}Read`]), acceptedAt: agreedAt })),
+      ...(corporate ? [{ title: BRAND.corporateAgreement?.title ?? 'Client Agreement (Corporate)', url: BRAND.corporateAgreement?.url || null, accepted: true, acceptedAt: agreedAt }] : [])
+    ];
     const row = {
       // 2.1 personal information
       accountType: v.accountType,
@@ -194,11 +201,7 @@ export async function submitApplication(input) {
       usCitizen: questionnaire ? v.usCitizen : null,
       tinEncrypted: questionnaire && v.tin ? encryptField(v.tin) : null,
       pep: questionnaire ? (v.pep ? 1 : 0) : null,
-      // 2.5 (and 2.8) what was signed and when
-      agreements: JSON.stringify([
-        ...BRAND.agreements.map((a, i) => ({ title: a.title, url: a.url || null, accepted: Boolean(v[`agreement${i + 1}`]), read: Boolean(v[`agreement${i + 1}Read`]), acceptedAt: agreedAt })),
-        ...(corporate ? [{ title: BRAND.corporateAgreement?.title ?? 'Client Agreement (Corporate)', url: BRAND.corporateAgreement?.url || null, accepted: true, acceptedAt: agreedAt }] : [])
-      ]),
+      agreements: JSON.stringify(signedAgreements),
       // 2.6–2.7 corporate clients
       company: corporate
         ? JSON.stringify({
@@ -256,6 +259,15 @@ export async function submitApplication(input) {
     if (isDuplicate(err)) return { step: STEP_INDEX.contact, errors: { email: TAKEN } };
     console.error('[application] submit:', err);
     return { error: 'We could not save your application. Please try again.' };
+  }
+
+  // the signed copies of the agreements (name, signature and date filled in) go to OSS; their keys are kept with the
+  // agreements. Not fatal: without them, a copy is made when the account is opened (src/lib/accountOpening.js)
+  try {
+    const signed = await storeSignedAgreements({ applicationId: id, agreements: signedAgreements, name: `${v.firstName} ${v.lastName}`, email: v.email, reference });
+    if (signed.some((a) => a.file)) await query('UPDATE client_applications SET agreements = ? WHERE id = ?', [JSON.stringify(signed), id]);
+  } catch (err) {
+    console.error('[application] signed agreements:', err?.message || err);
   }
 
   // signed in from here on: the identity verification that follows (actions/verification.js) is tied to this client

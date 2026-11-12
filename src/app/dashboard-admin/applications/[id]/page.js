@@ -292,6 +292,37 @@ export default async function ApplicationPage({ params }) {
             )}
           </section>
 
+          {/* the signed copies stored in OSS at submission (src/lib/signedAgreement.js); hidden when there are none */}
+          {app.agreements.some((a) => a.file) && (
+            <section className="ad-card ad-section">
+              <header>
+                <h2>Signed agreements</h2>
+                <p className="ad-muted">The client’s signed copies. Opens in a new tab.</p>
+              </header>
+              <ul className="ad-files">
+                {app.agreements.map(
+                  (a, n) =>
+                    a.file && (
+                      <li key={n}>
+                        <div>
+                          <strong>{a.title}</strong>
+                          <small>Signed {dateTime(a.acceptedAt ?? app.submittedAt)}</small>
+                        </div>
+                        <span>
+                          <a className="ad-btn ad-btn-small" href={`${ADMIN_HOME}/files/${app.id}?kind=agreement&n=${n}`} target="_blank" rel="noreferrer">
+                            View
+                          </a>
+                          <a className="ad-btn ad-btn-small ad-btn-ghost" href={`${ADMIN_HOME}/files/${app.id}?kind=agreement&n=${n}&download=1`}>
+                            Download
+                          </a>
+                        </span>
+                      </li>
+                    )
+                )}
+              </ul>
+            </section>
+          )}
+
           <section className="ad-card ad-section">
             <header>
               <h2>Files from the application</h2>
