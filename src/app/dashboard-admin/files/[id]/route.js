@@ -1,27 +1,39 @@
 import { NextResponse } from 'next/server';
 import { getAdmin } from '@/lib/admin';
-import { getDocument, getFormFile } from '@/lib/adminData';
+import { getAgreement, getDocument, getFormFile } from '@/lib/adminData';
 import { signedUrl, storageConfigured } from '@/lib/storage';
 
 export const runtime = 'nodejs';
 
 /**
- * GET /dashboard-admin/files/<id>?kind=form|doc  (administrators only)
- *   form → a file uploaded in the application form (stored in MySQL, application_files), streamed inline
- *   doc  → a file uploaded from the client dashboard (stored in OSS, client_documents): redirects to a signed link that
- *          works for one minute
+ * GET /dashboard-admin/files/<id>?kind=form|doc|agreement  (administrators only)
+ *   form      → a file uploaded in the application form (stored in MySQL, application_files), streamed inline
+ *   doc       → a file uploaded from the client dashboard (stored in OSS, client_documents): redirects to a signed link
+ *               that works for one minute
+ *   agreement → <id> is the application, &n= the agreement (0-based): the signed copy stored in OSS at submission
+ *               (src/lib/signedAgreement.js), through a one-minute link (404 when none was stored)
  * Add &download=1 to save the file instead of showing it. Never cached.
  */
 const SAFE_TYPES = ['application/pdf', 'image/jpeg', 'image/png'];
+const KINDS = ['form', 'doc', 'agreement'];
 
 export async function GET(req, ctx) {
   if (!(await getAdmin())) return new NextResponse('Unauthorized', { status: 401 });
   const { id } = await ctx.params;
   const url = new URL(req.url);
-  const kind = url.searchParams.get('kind') === 'doc' ? 'doc' : 'form';
+  const kind = KINDS.includes(url.searchParams.get('kind')) ? url.searchParams.get('kind') : 'form';
   const download = url.searchParams.get('download') === '1';
 
   try {
+    if (kind === 'agreement') {
+      const found = await getAgreement(id, url.searchParams.get('n'));
+      if (!found?.agreement.file) return new NextResponse('Not found', { status: 404 });
+      if (!storageConfigured()) return new NextResponse('File storage is not configured', { status: 503 });
+      const { app, agreement } = found;
+      const filename = `${agreement.title} - ${app.applicationReference}.pdf`;
+      return NextResponse.redirect(signedUrl(agreement.file, { expires: 60, filename: download ? filename : undefined }));
+    }
+
     if (kind === 'doc') {
       const doc = await getDocument(id);
       if (!doc) return new NextResponse('Not found', { status: 404 });

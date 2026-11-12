@@ -8,18 +8,20 @@ import { BRAND } from '@/lib/brand';
 import { accountOpenedEmail, sendMail } from '@/lib/mailer';
 import { downloadApplicantFile, getApplicantByUserId, getApplicantFiles } from '@/lib/sumsub';
 import { agreementPdf } from '@/lib/agreementPdf';
+import { signedAgreementPdf, storedAgreement } from '@/lib/signedAgreement';
 import { Cat5Error, cat5Configured, onboardCustomer, uploadFile } from '@/lib/cat5';
 import { demoApplicant, demoApplicantFiles, demoMode, downloadDemoFile, simulatedMax } from '@/lib/demo';
 
 /**
  * Opens the client's account in MAX once Sumsub has approved them (called from /success, src/app/actions/account.js).
  * Data: our application (client_applications) + the approved Sumsub applicant (ID document, proof of address, address,
- * questionnaire). Files are copied from Sumsub to MAX; the two agreements are sent as signature-record PDFs.
+ * questionnaire). Files are copied from Sumsub to MAX; the two agreements are sent as the client's signed copies
+ * (src/lib/signedAgreement.js).
  * The password is generated here, sent to MAX and e-mailed to the client. Until that e-mail has gone out it is kept
  * encrypted in max_onboarding, so a retry sends MAX (and the client) the same one; then it is erased.
  *
  * max_onboarding.status: new → processing → done | failed (retried on the next visit, up to MAX_ATTEMPTS) | blocked
- * (our team has to look: duplicate e-mail/phone, data MAX refused, missing proof of address, corporate client).
+ * (our team has to look: duplicate e-mail/phone, data MAX refused, missing ID document, corporate client).
  * MAX's external_customer_id is our application reference, so retries are idempotent on their side too.
  * Demo mode (CAT5_DEMO_MODE, src/lib/demo.js) swaps Sumsub for a made-up approved applicant, and MAX for simulated
  * answers when CAT5_API_BASE_URL isn't set.
@@ -112,9 +114,10 @@ export async function buildRequest(app, applicant, password) {
   if (!front) throw new Blocked('Sumsub has no accepted identity document image for this client.');
   if (!idDoc?.number && !app.idNumberEncrypted) throw new Blocked('Sumsub has no document number for this client.');
 
+  // proof of address is optional for MAX: without it, proof_ddress and zipcode are sent as "" (the address itself is
+  // still required: Sumsub's, else the one from our form, else the country of residence)
   const poaFiles = files.filter((f) => POA_TYPES.includes(f.idDocDef?.idDocType)).slice(0, 15);
-  const address = (info.addresses ?? applicant.fixedInfo?.addresses ?? [])[0];
-  if (!poaFiles.length || !address) throw new Blocked('Sumsub has no proof of address for this client: add the proof-of-residence step to the Sumsub level.');
+  const address = (info.addresses ?? applicant.fixedInfo?.addresses ?? [])[0] ?? {};
 
   const birthday = info.dob || app.dateOfBirth;
   const agreements = Array.isArray(app.agreements) ? app.agreements : JSON.parse(app.agreements ?? '[]');
@@ -129,12 +132,24 @@ export async function buildRequest(app, applicant, password) {
   for (const [i, f] of poaFiles.entries()) poaUrls.push(await copyFromSumsub(applicant, f, email, `proof-of-address-${i + 1}`));
   const agreementUrls = [];
   for (const [i, a] of signed.entries()) {
-    const pdf = await agreementPdf({ title: a.title, name, email, reference: app.applicationReference, acceptedAt: a.acceptedAt ?? app.submittedAt });
+    // the signed copy stored at submission (src/lib/signedAgreement.js), else one made now; without an agreement PDF,
+    // the signature record alone
+    const details = { title: a.title, name, email, reference: app.applicationReference, acceptedAt: a.acceptedAt ?? app.submittedAt };
+    const pdf =
+      (await storedAgreement(a).catch((err) => console.warn(`[max] stored ${a.title} unreadable: ${err.message}`))) ??
+      (await signedAgreementPdf({ ...details, url: a.url })) ??
+      (await agreementPdf(details));
     agreementUrls.push(await max().uploadFile(email, { buffer: pdf, contentType: 'application/pdf', name: `agreement-${i + 1}` }));
   }
 
   const tin = answers.pick('tin') || (app.tinEncrypted ? decryptField(app.tinEncrypted) : '') || `Not available (${answers.pick('noTinReason') || 'not provided'})`;
-  const street = address.formattedAddress || [address.flatNumber, address.buildingNumber, address.street, address.subStreet, address.town, address.state].filter(Boolean).join(', ');
+  const street =
+    address.formattedAddress ||
+    [address.flatNumber, address.buildingNumber, address.street, address.subStreet, address.town, address.state].filter(Boolean).join(', ') ||
+    app.address ||
+    countryByCode(app.country)?.name ||
+    '';
+  if (!street) throw new Blocked('No residential address for this client (Sumsub has none and the application has no country).');
   const dial = countryByCode(app.phoneCountry || app.country)?.dial;
   // the MAX agent / IB every account is opened under (required; MAX refuses an unknown one); differs per MAX environment
   const invitationCode = cut(process.env.CAT5_INVITATION_CODE, 64);
@@ -168,7 +183,7 @@ export async function buildRequest(app, applicant, password) {
       forms: {
         base: {},
         identity: { front_img: frontUrl, back_img: backUrl },
-        address: { proof_ddress: poaUrls, zipcode: cut(address.postCode || '', 32) },
+        address: { proof_ddress: poaUrls.length ? poaUrls : '', zipcode: cut(address.postCode || app.postalCode || '', 32) },
         contract: { agreement: agreementUrls[0], agreement2: agreementUrls[1] }
       }
     }

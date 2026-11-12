@@ -187,6 +187,14 @@ export const getEncrypted = (id) => queryOne('SELECT idNumberEncrypted, tinEncry
 export const getFormFile = (id) =>
   /^\d+$/.test(String(id)) ? queryOne('SELECT id, filename, content_type, content FROM application_files WHERE id = ? AND application_id IS NOT NULL', [id]) : null;
 
+/** Agreement `n` (0-based) of an application with what is needed to show it → { app, agreement } or null. */
+export async function getAgreement(id, n) {
+  if (!/^\d+$/.test(String(id)) || !/^\d+$/.test(String(n))) return null;
+  const app = await queryOne('SELECT id, applicationReference, agreements FROM client_applications WHERE id = ?', [id]);
+  const agreement = (asJson(app?.agreements) ?? [])[Number(n)];
+  return agreement?.accepted ? { app, agreement } : null;
+}
+
 /** A dashboard document row (the file itself is in OSS, key in storage_key), or null. */
 export const getDocument = (id) =>
   /^\d+$/.test(String(id)) ? queryOne('SELECT id, filename, content_type, storage_key FROM client_documents WHERE id = ?', [id]) : null;
