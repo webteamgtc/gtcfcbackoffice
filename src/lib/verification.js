@@ -1,6 +1,7 @@
 import 'server-only';
 import { query } from '@/lib/db';
-import { getApplicantByUserId, statusFromReview } from '@/lib/sumsub';
+import { getApplicantByUserId, statusFromReview, sumsubConfigured } from '@/lib/sumsub';
+import { demoMode } from '@/lib/demo';
 
 /**
  * Stores a Sumsub review in client_verifications (one row per application, db/schema.sql) and mirrors the outcome onto
@@ -63,4 +64,19 @@ export async function syncFromSumsub(userId) {
     reviewResult: applicant.review?.reviewResult,
     event: 'sync'
   });
+}
+
+/**
+ * syncFromSumsub for pages that show the status (back office, the client's page and outcome pages): picks up a decision
+ * made in the Sumsub dashboard (e.g. a manual approval) when its webhook can't reach us, as in local development.
+ * Best effort: on any error the stored status stays. → our status, or null when not checked.
+ */
+export async function refreshFromSumsub(userId) {
+  if (!sumsubConfigured() || demoMode()) return null;
+  try {
+    return await syncFromSumsub(String(userId));
+  } catch (err) {
+    console.warn(`[sumsub] refresh ${userId}: ${err.message}`);
+    return null;
+  }
 }

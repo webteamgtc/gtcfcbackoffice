@@ -5,6 +5,7 @@ import { AlertIcon, CheckIcon, LockIcon } from '@/app/components/icons';
 import { logout } from '@/app/actions/auth';
 import { BRAND } from '@/lib/brand';
 import { getCurrentUser } from '@/lib/user';
+import { refreshFromSumsub } from '@/lib/verification';
 
 /**
  * Page shown after Sumsub's automatic review: /success (approved) and /failed (rejected, finally or with "resubmit").
@@ -37,7 +38,13 @@ export async function requireOutcome(...statuses) {
     console.error('[verification result] session lookup:', err);
     return null;
   });
-  if (!user || !statuses.includes(user.verificationStatus)) redirect('/');
+  if (!user) redirect('/');
+  // a decision changed in the Sumsub dashboard (e.g. approved after a rejection): the current one decides the page
+  if (user.verificationStatus !== 'approved') {
+    const now = await refreshFromSumsub(user.id);
+    if (now && now !== 'not_started') user.verificationStatus = now;
+  }
+  if (!statuses.includes(user.verificationStatus)) redirect('/');
   return user;
 }
 
