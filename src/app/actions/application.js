@@ -7,7 +7,7 @@ import { createSession } from '@/lib/session';
 import { phoneKey, verifyOtp } from '@/lib/otpStore';
 import { BRAND } from '@/lib/brand';
 import { storeSignedAgreements } from '@/lib/signedAgreement';
-import { FILE_FIELDS, STEPS, e164, emailError, firstStepWithError, isCorporate, needsBackSide, readApplication, showsStep, validateAll, validateStep } from '@/lib/application';
+import { AGREEMENT_TEXT, FILE_FIELDS, STEPS, e164, emailError, firstStepWithError, isCorporate, needsBackSide, readApplication, showsStep, validateAll, validateStep } from '@/lib/application';
 
 
 /**
@@ -154,7 +154,7 @@ export async function submitApplication(input) {
     const agreedAt = now.toISOString();
     // 2.5 (and 2.8) what was signed and when
     signedAgreements = [
-      ...BRAND.agreements.map((a, i) => ({ title: a.title, url: a.url || null, accepted: Boolean(v[`agreement${i + 1}`]), read: Boolean(v[`agreement${i + 1}Read`]), acceptedAt: agreedAt })),
+      ...BRAND.agreements.map((a, i) => ({ title: a.title, url: a.url || null, declaration: a.declaration || AGREEMENT_TEXT, accepted: Boolean(v[`agreement${i + 1}`]), read: Boolean(v[`agreement${i + 1}Read`]), acceptedAt: agreedAt })),
       ...(corporate ? [{ title: BRAND.corporateAgreement?.title ?? 'Client Agreement (Corporate)', url: BRAND.corporateAgreement?.url || null, accepted: true, acceptedAt: agreedAt }] : [])
     ];
     const row = {
@@ -173,6 +173,11 @@ export async function submitApplication(input) {
       phone: v.phone,
       phoneCountry: v.phoneCountry,
       phoneVerifiedAt: now,
+      // residential address
+      flatNumber: v.flatNumber,
+      buildingName: v.buildingName,
+      streetAddress: v.streetAddress,
+      city: v.city,
       // only when the identity step is shown; otherwise Sumsub reads it from the document
       idNumberEncrypted: v.idNumber ? encryptField(v.idNumber) : null,
       // 2.2 identity: from the form when that step is shown, otherwise collected by Sumsub

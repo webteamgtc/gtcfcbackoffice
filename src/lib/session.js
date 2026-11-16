@@ -13,6 +13,7 @@ export async function encrypt(payload) {
     .sign(encodedKey);
 }
 
+
 export async function decrypt(session) {
   if (!session) return null;
   try {

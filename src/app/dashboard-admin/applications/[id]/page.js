@@ -3,10 +3,13 @@ import { notFound } from 'next/navigation';
 import { requireAdmin } from '@/lib/admin';
 import { ADMIN_HOME } from '@/lib/adminRoutes';
 import { getApplication, VERIFICATION } from '@/lib/adminData';
+import { refreshFromSumsub } from '@/lib/verification';
+import { demoMode } from '@/lib/demo';
 import AdminShell, { StatusPill } from '../../AdminShell';
 import CopyButton from '../../CopyButton';
 import Icon from '../../Icon';
 import { ago, avatarTone, countryLabel, dateOnly, dateTime, docTypeLabel, fileSize, fullName, initials, phoneLabel } from '../../format';
+import MaxAccount from './MaxAccount';
 import RevealField from './RevealField';
 
 export const dynamic = 'force-dynamic';
@@ -53,6 +56,8 @@ export default async function ApplicationPage({ params }) {
 
   let record;
   try {
+    // the current Sumsub decision first (a manual change in the Sumsub dashboard may not have reached us by webhook)
+    if (/^\d+$/.test(String(id))) await refreshFromSumsub(id);
     record = await getApplication(id);
   } catch (err) {
     console.error('[admin] application:', err.message);
@@ -70,7 +75,9 @@ export default async function ApplicationPage({ params }) {
   }
   if (!record) notFound();
 
-  const { app, verification, files, documents } = record;
+  const { app, verification, files, documents, max } = record;
+  // the MAX account is opened by an administrator with the button in the MAX account card (MaxAccount.jsx)
+  const approved = demoMode() || verification?.status === 'approved';
   const status = VERIFICATION[verification?.status ?? 'not_started'] ?? VERIFICATION.not_started;
   const corporate = app.accountType === 'corporate';
   const co = app.company;
@@ -176,6 +183,13 @@ export default async function ApplicationPage({ params }) {
             <Field label="Email verified">{app.emailVerifiedAt ? dateTime(app.emailVerifiedAt) : 'Not verified'}</Field>
             <Field label="Mobile (WhatsApp)">{phoneLabel(app.phone, app.phoneCountry || app.country)}</Field>
             <Field label="Mobile verified">{app.phoneVerifiedAt ? dateTime(app.phoneVerifiedAt) : 'Not verified'}</Field>
+          </Section>
+
+          <Section title="Residential address">
+            <Field label="House / Flat number">{text(app.flatNumber)}</Field>
+            <Field label="House / Building name">{text(app.buildingName)}</Field>
+            <Field label="Street address" wide>{text(app.streetAddress)}</Field>
+            <Field label="City / Emirate">{text(app.city)}</Field>
           </Section>
 
           <Section title="Identity" hint="Protected values stay hidden until you reveal them. Each reveal is recorded.">
@@ -322,6 +336,20 @@ export default async function ApplicationPage({ params }) {
               </ul>
             </section>
           )}
+
+          <section className="ad-card ad-section">
+            <header>
+              <h2>MAX account</h2>
+              <p className="ad-muted">Opening it e-mails the client their login details.</p>
+            </header>
+            <MaxAccount
+              applicationId={String(app.id)}
+              max={max}
+              approved={approved}
+              emailedAt={max?.password_emailed_at ? dateTime(max.password_emailed_at) : null}
+              updatedAt={max?.updated_at ? dateTime(max.updated_at) : null}
+            />
+          </section>
 
           <section className="ad-card ad-section">
             <header>

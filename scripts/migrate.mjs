@@ -59,6 +59,11 @@ if (stillRequired.length) {
 const add = [];
 if (!colInfo.some((c) => c.name === 'phoneCountry')) add.push("ADD COLUMN phoneCountry VARCHAR(16) NULL COMMENT 'Country code of the mobile''s dialling code (older rows: see country)' AFTER phone");
 if (!colInfo.some((c) => c.name === 'phoneVerifiedAt')) add.push("ADD COLUMN phoneVerifiedAt DATETIME NULL COMMENT 'UTC time the WhatsApp code was verified' AFTER phoneCountry");
+// residential address step (after contact details)
+if (!colInfo.some((c) => c.name === 'flatNumber')) add.push("ADD COLUMN flatNumber VARCHAR(50) NULL COMMENT 'Residential address: house / flat number' AFTER address");
+if (!colInfo.some((c) => c.name === 'buildingName')) add.push("ADD COLUMN buildingName VARCHAR(150) NULL COMMENT 'Residential address: house / building name' AFTER flatNumber");
+if (!colInfo.some((c) => c.name === 'streetAddress')) add.push("ADD COLUMN streetAddress VARCHAR(300) NULL COMMENT 'Residential address: street' AFTER buildingName");
+if (!colInfo.some((c) => c.name === 'city')) add.push("ADD COLUMN city VARCHAR(100) NULL COMMENT 'Residential address: city / emirate' AFTER streetAddress");
 if (!colInfo.some((c) => c.name === 'accountType')) add.push("ADD COLUMN accountType VARCHAR(20) NULL COMMENT 'individual | corporate' AFTER agreements");
 if (!colInfo.some((c) => c.name === 'company')) add.push("ADD COLUMN company JSON NULL COMMENT 'Corporate clients: company details, authorised person, shareholders, license' AFTER accountType");
 if (add.length) {

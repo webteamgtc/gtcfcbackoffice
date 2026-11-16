@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import { getCurrentUser, getUserDocuments, profileCompletion } from '@/lib/user';
 import { accountStatus } from '@/lib/accountOpening';
 import { journey } from '@/lib/kyc';
+import { refreshFromSumsub } from '@/lib/verification';
 import { ArrowRightIcon } from '@/app/components/icons';
 import { Activity, Details, DetailsCardTitle, DocTile, HelpCard, ProfileCard, Shell } from '@/app/components/dashboard/parts';
 
@@ -22,6 +23,11 @@ const ACCOUNT = {
 export default async function Home() {
   const user = await getCurrentUser();
   if (!user) redirect('/login');
+  // a decision changed in the Sumsub dashboard since (e.g. approved after a rejection)
+  if (user.verificationStatus && user.verificationStatus !== 'approved') {
+    const now = await refreshFromSumsub(user.id);
+    if (now && now !== 'not_started') user.verificationStatus = now;
+  }
 
   const [documents, account] = await Promise.all([getUserDocuments(user.id), user.verificationStatus === 'approved' ? accountStatus(user.id) : null]);
   const fullName = [user.firstName, user.lastName].filter(Boolean).join(' ') || user.email;

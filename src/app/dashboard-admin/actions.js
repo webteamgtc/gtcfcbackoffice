@@ -1,11 +1,16 @@
 'use server';
 
 import { headers } from 'next/headers';
+import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { checkAdminLogin, createAdminSession, deleteAdminSession, getAdmin } from '@/lib/admin';
 import { getEncrypted } from '@/lib/adminData';
 import { ADMIN_HOME, ADMIN_LOGIN } from '@/lib/adminRoutes';
 import { decryptField } from '@/lib/fieldCrypto';
+import { query } from '@/lib/db';
+import { openAccount } from '@/lib/accountOpening';
+import { refreshFromSumsub } from '@/lib/verification';
+import { demoMode } from '@/lib/demo';
 
 const clientIp = async () => {
   const h = await headers();
@@ -55,5 +60,29 @@ export async function revealSensitive(applicationId, field) {
   } catch (err) {
     console.error('[admin] reveal:', err.message);
     return { error: 'Could not read this value.' };
+  }
+}
+
+/**
+ * Opens the client's account in MAX from the back office (src/lib/accountOpening.js: uploads, onboarding, then the e-mail
+ * with the client's login details), or tries again after a failure. Only for a client Sumsub approved. A failed or
+ * blocked attempt is started afresh (the tries count again from 0); an account already open is left alone.
+ * → { status: 'done' | 'processing' | 'failed' | 'blocked', message } | { error }
+ */
+export async function openMaxAccount(applicationId) {
+  const admin = await getAdmin();
+  if (!admin) return { error: 'Please sign in again.' };
+  if (!/^\d+$/.test(String(applicationId))) return { error: 'Not available.' };
+  try {
+    const verification = demoMode() ? 'approved' : await refreshFromSumsub(applicationId);
+    if (verification !== 'approved') return { error: 'The client is not approved in Sumsub yet.' };
+    await query("UPDATE max_onboarding SET status = 'failed', attempts = 0 WHERE application_id = ? AND status IN ('failed', 'blocked')", [applicationId]);
+    console.info(`[admin-audit] ${admin} opened the MAX account of application ${applicationId}`);
+    const { status } = await openAccount(applicationId);
+    revalidatePath(`${ADMIN_HOME}/applications/${applicationId}`);
+    return { status };
+  } catch (err) {
+    console.error('[admin] open MAX account:', err.message);
+    return { error: 'Could not open the account. Please try again.' };
   }
 }

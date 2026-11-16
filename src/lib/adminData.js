@@ -153,7 +153,7 @@ const asJson = (v) => {
   }
 };
 
-/** One application with its verification, files and documents; null when there is no such id. */
+/** One application with its verification, files, documents and MAX account (max_onboarding); null when there is no such id. */
 export async function getApplication(id) {
   if (!/^\d+$/.test(String(id))) return null;
   const row = await queryOne('SELECT * FROM client_applications WHERE id = ?', [id]);
@@ -166,17 +166,19 @@ export async function getApplication(id) {
   app.agreements = asJson(row.agreements) ?? [];
   app.company = asJson(row.company);
 
-  const [verification, files, documents] = await Promise.all([
+  const [verification, files, documents, max] = await Promise.all([
     queryOne('SELECT * FROM client_verifications WHERE application_id = ?', [id]),
     query('SELECT id, field, filename, content_type, size, doc_type, side FROM application_files WHERE application_id = ? ORDER BY id', [id]),
-    query('SELECT id, doc_type, filename, content_type, size, review_status, uploaded_at FROM client_documents WHERE application_id = ? ORDER BY uploaded_at DESC, id DESC', [id])
+    query('SELECT id, doc_type, filename, content_type, size, review_status, uploaded_at FROM client_documents WHERE application_id = ? ORDER BY uploaded_at DESC, id DESC', [id]),
+    queryOne('SELECT status, member_id, result_code, message, duplicate_member_ids, attempts, password_emailed_at, updated_at FROM max_onboarding WHERE application_id = ?', [id])
   ]);
   app.submittedAt = row.submittedAt ?? row.createdAt ?? row.created_at ?? null;
   return {
     app,
     verification: verification ? { ...verification, reject_labels: asJson(verification.reject_labels) ?? [] } : null,
     files,
-    documents
+    documents,
+    max: max ? { ...max, duplicate_member_ids: asJson(max.duplicate_member_ids) } : null
   };
 }
 

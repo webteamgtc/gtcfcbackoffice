@@ -134,7 +134,7 @@ export async function buildRequest(app, applicant, password) {
   for (const [i, a] of signed.entries()) {
     // the signed copy stored at submission (src/lib/signedAgreement.js), else one made now; without an agreement PDF,
     // the signature record alone
-    const details = { title: a.title, name, email, reference: app.applicationReference, acceptedAt: a.acceptedAt ?? app.submittedAt };
+    const details = { title: a.title, name, email, reference: app.applicationReference, acceptedAt: a.acceptedAt ?? app.submittedAt, declaration: a.declaration };
     const pdf =
       (await storedAgreement(a).catch((err) => console.warn(`[max] stored ${a.title} unreadable: ${err.message}`))) ??
       (await signedAgreementPdf({ ...details, url: a.url })) ??
@@ -146,6 +146,7 @@ export async function buildRequest(app, applicant, password) {
   const street =
     address.formattedAddress ||
     [address.flatNumber, address.buildingNumber, address.street, address.subStreet, address.town, address.state].filter(Boolean).join(', ') ||
+    [app.flatNumber, app.buildingName, app.streetAddress, app.city].filter(Boolean).join(', ') ||
     app.address ||
     countryByCode(app.country)?.name ||
     '';
