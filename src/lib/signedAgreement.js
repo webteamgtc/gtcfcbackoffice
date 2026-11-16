@@ -60,7 +60,7 @@ function fit(font, text, size, width) {
 }
 
 /** → PDF bytes (Buffer) of the signed agreement, or null when the agreement has no PDF to sign. */
-export async function signedAgreementPdf({ title, url, name, email, reference, acceptedAt }) {
+export async function signedAgreementPdf({ title, url, name, email, reference, acceptedAt, declaration }) {
   const layout = LAYOUTS[url];
   if (!layout) return null;
 
@@ -87,7 +87,7 @@ export async function signedAgreementPdf({ title, url, name, email, reference, a
   }
 
   // the record of how and when it was signed (reference, e-mail, time, declaration) as the last page
-  const record = await PDFDocument.load(await agreementPdf({ title, name: fullName, email, reference, acceptedAt }));
+  const record = await PDFDocument.load(await agreementPdf({ title, name: fullName, email, reference, acceptedAt, declaration }));
   const [recordPage] = await pdf.copyPages(record, [0]);
   pdf.addPage(recordPage);
   pdf.setTitle(`${title} - signed - ${reference}`);

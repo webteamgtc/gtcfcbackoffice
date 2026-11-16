@@ -15,7 +15,8 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 // corporate steps come last, so an individual's steps are the first six of the list
 export const STEPS = [
   { key: 'personal', title: 'Personal Information' },
-  { key: 'contact', title: 'Contact Details' }, // email + mobile, each verified with a code, and the ID number
+  { key: 'contact', title: 'Contact Details' }, // email + mobile, verified with a code
+  { key: 'residence', title: 'Residential Address' }, // where the client lives (house / flat, building, street, city)
   { key: 'identity', title: 'Identity Information' },
   { key: 'address', title: 'Proof of Address' },
   { key: 'questionnaire', title: 'Questionnaire' },
@@ -125,6 +126,11 @@ export const EMPTY_APPLICATION = {
   phone: '', // national number
   phoneCode: '',
   phoneToken: '', // signed token returned with the WhatsApp code (src/lib/otpStore.js), sent back to be checked
+  // residential address (the step after contact details)
+  flatNumber: '', // house / flat number
+  buildingName: '', // house / building name
+  streetAddress: '',
+  city: '', // city / emirate
   // 2.2 identity information (POI)
   idType: '',
   idFront: '', // uploaded file ids
@@ -192,6 +198,7 @@ export const EMPTY_APPLICATION = {
 export const STEP_FIELDS = {
   personal: ['lastName', 'firstName', 'dateOfBirth', 'country', 'nationality'],
   contact: ['email', 'emailCode', 'phoneCountry', 'phone', 'phoneCode'],
+  residence: ['flatNumber', 'buildingName', 'streetAddress', 'city'],
   identity: ['nationality', 'idType', 'idFront', 'idBack', 'idLastName', 'idFirstName', 'idNumber'],
   address: ['poaFile', 'poaCountry', 'postalCode', 'address', 'proofDate'],
   questionnaire: [
@@ -210,7 +217,7 @@ export const STEP_FIELDS = {
 /** Index of the first step that has one of `errors`' fields (-1 when none). */
 export const firstStepWithError = (errors) => STEPS.findIndex((s) => STEP_FIELDS[s.key].some((k) => errors[k]));
 
-const LIMITS = { phoneToken: 2000, emailToken: 2000, regAddress: 300, repAddress: 300, address: 300, idNumber: 40, postalCode: 20, tin: 40, employer: 120, previousEmployment: 120, industryOther: 120, occupationOther: 120 };
+const LIMITS = { phoneToken: 2000, emailToken: 2000, flatNumber: 50, buildingName: 150, streetAddress: 300, city: 100, regAddress: 300, repAddress: 300, address: 300, idNumber: 40, postalCode: 20, tin: 40, employer: 120, previousEmployment: 120, industryOther: 120, occupationOther: 120 };
 
 /** Trimmed copy of the values (from a plain object or FormData). */
 export function readApplication(src) {
@@ -313,6 +320,12 @@ export function validateStep(key, v) {
     else if (digits.length < 5 || digits.length > 14) e.phone = 'Please enter a valid mobile number.';
     if (!v.phoneToken) e.phoneCode = 'Send the code to your WhatsApp first.';
     else if (!/^\d{6}$/.test(v.phoneCode)) e.phoneCode = v.phoneCode ? 'The code has 6 digits.' : 'Enter the 6-digit code we sent on WhatsApp.';
+  }
+  if (key === 'residence') {
+    if (!v.flatNumber.trim()) e.flatNumber = 'Please enter your house or flat number.';
+    if (!v.buildingName.trim()) e.buildingName = 'Please enter your house or building name.';
+    if (!v.streetAddress.trim()) e.streetAddress = 'Please enter your street address.';
+    if (!v.city.trim()) e.city = 'Please enter your city or emirate.';
   }
   if (key === 'identity') {
     { const m = countryError(v.nationality, 'Please choose your nationality.'); if (m) e.nationality = m; }

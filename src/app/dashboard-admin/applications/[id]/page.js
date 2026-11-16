@@ -185,6 +185,13 @@ export default async function ApplicationPage({ params }) {
             <Field label="Mobile verified">{app.phoneVerifiedAt ? dateTime(app.phoneVerifiedAt) : 'Not verified'}</Field>
           </Section>
 
+          <Section title="Residential address">
+            <Field label="House / Flat number">{text(app.flatNumber)}</Field>
+            <Field label="House / Building name">{text(app.buildingName)}</Field>
+            <Field label="Street address" wide>{text(app.streetAddress)}</Field>
+            <Field label="City / Emirate">{text(app.city)}</Field>
+          </Section>
+
           <Section title="Identity" hint="Protected values stay hidden until you reveal them. Each reveal is recorded.">
             <Field label="ID type">{app.idType ? docTypeLabel(app.idType) : '—'}</Field>
             <Field label="ID number">{app.hasIdNumber ? <RevealField applicationId={String(app.id)} field="idNumber" /> : '—'}</Field>

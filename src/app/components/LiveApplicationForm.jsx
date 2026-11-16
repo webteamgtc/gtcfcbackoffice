@@ -54,41 +54,42 @@ const COUNTRY_OPTIONS = SELECTABLE_COUNTRIES.map((c) => ({ value: c.code, label:
 const asOptions = (list) => list.map((o) => ({ value: o, label: o }));
 const today = () => new Date().toISOString().slice(0, 10);
 
-const STEP_ICONS = [UserIcon, MailIcon, IdCardIcon, HomeIcon, BriefcaseIcon, PenIcon, BuildingIcon, FileIcon, PenIcon];
+const STEP_ICONS = [UserIcon, MailIcon, HomeIcon, IdCardIcon, HomeIcon, BriefcaseIcon, PenIcon, BuildingIcon, FileIcon, PenIcon];
 
 /**
- * What the client sees, one screen at a time. The questionnaire (step 4) is split into three parts; each part checks
+ * What the client sees, one screen at a time. The questionnaire (step 5) is split into three parts; each part checks
  * only its own fields, the server still validates the whole step.
  */
 const SCREENS = [
   { step: 0, Icon: UserIcon, minutes: 1, title: 'Personal information', text: 'Use your name exactly as it appears on your identity document.', cheer: 'Let’s get started' },
   {
     step: 1, Icon: MailIcon, minutes: 2, title: 'Contact details',
-    text: 'Enter your email, verify your mobile number with the code we send on WhatsApp, and add your ID number.', cheer: 'Nice start'
+    text: 'Enter your email and verify your mobile number with the code we send on WhatsApp.', cheer: 'Nice start'
   },
-  { step: 2, Icon: IdCardIcon, minutes: 2, title: 'Identity information', text: 'Upload clear photos of your document and enter the details exactly as they appear on it.', cheer: 'Nice start' },
-  { step: 3, Icon: HomeIcon, minutes: 2, title: 'Proof of address', text: 'Upload a recent utility bill or bank statement and enter the address shown on it.', cheer: 'Almost halfway' },
+  { step: 2, Icon: HomeIcon, minutes: 1, title: 'Residential address', text: 'Where you live now.', cheer: 'Good progress' },
+  { step: 3, Icon: IdCardIcon, minutes: 2, title: 'Identity information', text: 'Upload clear photos of your document and enter the details exactly as they appear on it.', cheer: 'Nice start' },
+  { step: 4, Icon: HomeIcon, minutes: 2, title: 'Proof of address', text: 'Upload a recent utility bill or bank statement and enter the address shown on it.', cheer: 'Almost halfway' },
   {
-    step: 4, part: 0, Icon: BriefcaseIcon, minutes: 1, title: 'Work and education', text: 'A few questions about your background, as required by our compliance obligations.', cheer: 'Halfway there',
+    step: 5, part: 0, Icon: BriefcaseIcon, minutes: 1, title: 'Work and education', text: 'A few questions about your background, as required by our compliance obligations.', cheer: 'Halfway there',
     fields: ['education', 'employment', 'industry', 'industryOther', 'occupation', 'occupationOther', 'employer', 'previousEmployment']
   },
-  { step: 4, part: 1, Icon: WalletIcon, minutes: 1, title: 'Income and funds', text: 'Choose the options that describe you best.', cheer: 'Keep going', fields: ['experienceYears', 'income', 'sourceOfFunds'] },
+  { step: 5, part: 1, Icon: WalletIcon, minutes: 1, title: 'Income and funds', text: 'Choose the options that describe you best.', cheer: 'Keep going', fields: ['experienceYears', 'income', 'sourceOfFunds'] },
   {
-    step: 4, part: 2, Icon: ChartIcon, minutes: 1, title: 'Experience and declarations', text: 'Your investment background and two short declarations.', cheer: 'Nearly done',
+    step: 5, part: 2, Icon: ChartIcon, minutes: 1, title: 'Experience and declarations', text: 'Your investment background and two short declarations.', cheer: 'Nearly done',
     fields: ['investmentExperience', 'marketExperience', 'usCitizen', 'tin', 'pep']
   },
-  { step: 5, Icon: PenIcon, minutes: 1, title: 'Client agreement', text: 'Please read the documents below and confirm to sign them electronically.', cheer: 'Almost there' },
+  { step: 6, Icon: PenIcon, minutes: 1, title: 'Client agreement', text: 'Please read the documents below and confirm to sign them electronically.', cheer: 'Almost there' },
   // corporate clients only (2.6–2.8)
   {
-    step: 6, part: 0, Icon: BuildingIcon, minutes: 2, title: 'Company details', text: 'The company exactly as it is registered.', cheer: 'Now your company',
+    step: 7, part: 0, Icon: BuildingIcon, minutes: 2, title: 'Company details', text: 'The company exactly as it is registered.', cheer: 'Now your company',
     fields: ['companyName', 'regNumber', 'regDate', 'regCountry', 'regCity', 'regPostalCode', 'regAddress', 'secondaryPhone']
   },
   {
-    step: 6, part: 1, Icon: UsersIcon, minutes: 2, title: 'Authorised person and shareholders', text: 'The person acting for the company, and any other shareholders.', cheer: 'Keep going',
+    step: 7, part: 1, Icon: UsersIcon, minutes: 2, title: 'Authorised person and shareholders', text: 'The person acting for the company, and any other shareholders.', cheer: 'Keep going',
     fields: ['repName', 'repPassport', 'repNationality', 'repRatio', 'repAddress', 'repEmail', 'repPhone', 'repOccupation', 'shareholders']
   },
-  { step: 7, Icon: FileIcon, minutes: 1, title: 'Business license', text: 'Upload the company’s trade or business license.', cheer: 'Nearly done' },
-  { step: 8, Icon: PenIcon, minutes: 1, title: 'Client agreement (corporate)', text: 'Please confirm to sign the agreement for the company electronically.', cheer: 'Last step' }
+  { step: 8, Icon: FileIcon, minutes: 1, title: 'Business license', text: 'Upload the company’s trade or business license.', cheer: 'Nearly done' },
+  { step: 9, Icon: PenIcon, minutes: 1, title: 'Client agreement (corporate)', text: 'Please confirm to sign the agreement for the company electronically.', cheer: 'Last step' }
 ];
 const partsOf = (step) => SCREENS.filter((s) => s.step === step).length;
 /** The screens of the steps this client goes through (hidden steps and, for individuals, corporate steps left out). */
@@ -453,7 +454,7 @@ export default function LiveApplicationForm() {
                   <CheckIcon />
                 </span>
                 <span>
-                  {AGREEMENT_TEXT}
+                  {d.declaration || AGREEMENT_TEXT}
                   {!isRead(d) && (
                     <strong className="doc-lock">
                       <LockIcon /> Open and read “{d.title}” first (press Read &amp; sign above) to unlock this box.
@@ -1010,6 +1011,15 @@ export default function LiveApplicationForm() {
       case 2:
         return (
           <div className="apply-grid">
+            {textField('flatNumber', 'House / Flat number', { icon: <HomeIcon />, placeholder: 'e.g. Flat 1204', autoComplete: 'address-line2' })}
+            {textField('buildingName', 'House / Building name', { icon: <BuildingIcon />, placeholder: 'e.g. Marina Heights', autoComplete: 'address-line1' })}
+            {textField('streetAddress', 'Street address', { icon: <HomeIcon />, placeholder: 'Street and area', autoComplete: 'street-address', wide: true })}
+            {textField('city', 'City / Emirate', { icon: <GlobeIcon />, placeholder: 'e.g. Dubai', autoComplete: 'address-level2' })}
+          </div>
+        );
+      case 3:
+        return (
+          <div className="apply-grid">
             {countryField('nationality', 'Nationality')}
             <div className="apply-spacer" aria-hidden />
             {choiceField(
@@ -1035,7 +1045,7 @@ export default function LiveApplicationForm() {
             {textField('idNumber', 'ID number', { icon: <IdCardIcon />, placeholder: 'Document number', autoComplete: 'off' })}
           </div>
         );
-      case 3:
+      case 4:
         return (
           <div className="apply-grid">
             {fileField('poaFile', 'Utilities & bank statements', { wide: true, hint: 'A utility bill or bank statement from the last 3 months showing your name and address · JPG, PNG or PDF' })}
@@ -1059,7 +1069,7 @@ export default function LiveApplicationForm() {
             {dateField('proofDate', 'Proof date', { optional: true, hint: 'The date printed on the document.' })}
           </div>
         );
-      case 4:
+      case 5:
         return (
           <div className="apply-grid">
             {selectField('education', 'Educational level', asOptions(OPTIONS.education))}
@@ -1072,7 +1082,7 @@ export default function LiveApplicationForm() {
             {textField('previousEmployment', 'Previous employment', { optional: true, placeholder: 'Previous employer or role' })}
           </div>
         );
-      case 5:
+      case 6:
         return (
           <div className="apply-grid">
             {choiceField('experienceYears', 'Years of working experience', asOptions(OPTIONS.experienceYears), { cols: 5 })}
@@ -1080,7 +1090,7 @@ export default function LiveApplicationForm() {
             {selectField('sourceOfFunds', 'What is the source of your funds / wealth?', asOptions(OPTIONS.sourceOfFunds), { wide: true })}
           </div>
         );
-      case 6:
+      case 7:
         return (
           <div className="apply-grid">
             {choiceField('investmentExperience', 'Investment experience', asOptions(OPTIONS.investmentExperience), { cols: 4 })}
@@ -1090,12 +1100,12 @@ export default function LiveApplicationForm() {
             {declareField('pep', 'Politically Exposed Person (PEP)', PEP_TEXT)}
           </div>
         );
-      case 7:
+      case 8:
         return signingField(
-          BRAND.agreements.map((a, i) => ({ k: `agreement${i + 1}`, title: a.title, url: a.url })),
+          BRAND.agreements.map((a, i) => ({ k: `agreement${i + 1}`, title: a.title, url: a.url, declaration: a.declaration })),
           'By signing, you accept these documents electronically. Your signature is equivalent to a handwritten one.'
         );
-      case 8:
+      case 9:
         return (
           <div className="apply-grid">
             {textField('companyName', 'Company name', { icon: <BuildingIcon />, placeholder: 'As registered', autoComplete: 'organization', wide: true })}
@@ -1120,7 +1130,7 @@ export default function LiveApplicationForm() {
             </Field>
           </div>
         );
-      case 9:
+      case 10:
         return (
           <div className="apply-grid">
             <p className="apply-section apply-wide">Authorised person</p>
@@ -1138,7 +1148,7 @@ export default function LiveApplicationForm() {
             {shareholdersField()}
           </div>
         );
-      case 10:
+      case 11:
         return (
           <div className="apply-grid">
             {textField('licenseCompanyName', 'Company name', { icon: <BuildingIcon />, placeholder: 'As on the license' })}

@@ -5,7 +5,7 @@ import { AGREEMENT_TEXT } from '@/lib/application';
 
 /**
  * The record of a client's electronic signature of one agreement (sent to MAX as the "signed agreement"): agreement title,
- * client, application reference, the declaration they accepted and when. A4, one page.
+ * client, application reference, the declaration they accepted (`declaration`, default AGREEMENT_TEXT) and when. A4, one page.
  */
 const A4 = [595.28, 841.89];
 const MARGIN = 56;
@@ -37,7 +37,7 @@ function wrap(text, font, size, width) {
 }
 
 /** → PDF bytes (Buffer) */
-export async function agreementPdf({ title, name, email, reference, acceptedAt }) {
+export async function agreementPdf({ title, name, email, reference, acceptedAt, declaration }) {
   const pdf = await PDFDocument.create();
   pdf.setTitle(`${latin1(title)} - ${latin1(name)}`);
   pdf.setAuthor(BRAND.legalName);
@@ -72,7 +72,7 @@ export async function agreementPdf({ title, name, email, reference, acceptedAt }
 
   text('Declaration accepted by the client', { font: bold, size: 12, gap: 8 });
   text(`The client electronically signed the ${title} in the online client application of ${BRAND.name} by confirming:`, { gap: 10 });
-  text(`"${AGREEMENT_TEXT}"`, { size: 11, color: MUTED, gap: 24 });
+  text(`"${declaration || AGREEMENT_TEXT}"`, { size: 11, color: MUTED, gap: 24 });
 
   page.drawLine({ start: { x: MARGIN, y }, end: { x: MARGIN + 220, y }, thickness: 0.8, color: MUTED });
   y -= 6;
