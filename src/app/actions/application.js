@@ -7,6 +7,7 @@ import { createSession } from '@/lib/session';
 import { phoneKey, verifyOtp } from '@/lib/otpStore';
 import { BRAND } from '@/lib/brand';
 import { storeSignedAgreements } from '@/lib/signedAgreement';
+import { requestIp } from '@/lib/clientIp';
 import { AGREEMENT_TEXT, FILE_FIELDS, STEPS, e164, emailError, firstStepWithError, isCorporate, needsBackSide, readApplication, showsStep, validateAll, validateStep } from '@/lib/application';
 
 
@@ -173,6 +174,7 @@ export async function submitApplication(input) {
       phone: v.phone,
       phoneCountry: v.phoneCountry,
       phoneVerifiedAt: now,
+      registerIp: await requestIp(), // the client's IP when they applied (MAX's register_ip)
       // residential address
       flatNumber: v.flatNumber,
       buildingName: v.buildingName,

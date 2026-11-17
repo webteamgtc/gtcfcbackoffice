@@ -59,6 +59,7 @@ if (stillRequired.length) {
 const add = [];
 if (!colInfo.some((c) => c.name === 'phoneCountry')) add.push("ADD COLUMN phoneCountry VARCHAR(16) NULL COMMENT 'Country code of the mobile''s dialling code (older rows: see country)' AFTER phone");
 if (!colInfo.some((c) => c.name === 'phoneVerifiedAt')) add.push("ADD COLUMN phoneVerifiedAt DATETIME NULL COMMENT 'UTC time the WhatsApp code was verified' AFTER phoneCountry");
+if (!colInfo.some((c) => c.name === 'registerIp')) add.push("ADD COLUMN registerIp VARCHAR(45) NULL COMMENT 'The client''s IP address when they submitted the application' AFTER phoneVerifiedAt");
 // residential address step (after contact details)
 if (!colInfo.some((c) => c.name === 'flatNumber')) add.push("ADD COLUMN flatNumber VARCHAR(50) NULL COMMENT 'Residential address: house / flat number' AFTER address");
 if (!colInfo.some((c) => c.name === 'buildingName')) add.push("ADD COLUMN buildingName VARCHAR(150) NULL COMMENT 'Residential address: house / building name' AFTER flatNumber");

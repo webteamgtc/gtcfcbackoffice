@@ -4,6 +4,7 @@ import countries from 'i18n-iso-countries';
 import { query, queryOne } from '@/lib/db';
 import { decryptField, encryptField } from '@/lib/fieldCrypto';
 import { countryByCode } from '@/lib/countries';
+import { publicIp } from '@/lib/clientIp';
 import { BRAND } from '@/lib/brand';
 import { accountOpenedEmail, sendMail } from '@/lib/mailer';
 import { downloadApplicantFile, getApplicantByUserId, getApplicantFiles } from '@/lib/sumsub';
@@ -11,6 +12,7 @@ import { agreementPdf } from '@/lib/agreementPdf';
 import { signedAgreementPdf, storedAgreement } from '@/lib/signedAgreement';
 import { Cat5Error, cat5Configured, onboardCustomer, uploadFile } from '@/lib/cat5';
 import { demoApplicant, demoApplicantFiles, demoMode, downloadDemoFile, simulatedMax } from '@/lib/demo';
+
 
 /**
  * Opens the client's account in MAX once Sumsub has approved them (called from /success, src/app/actions/account.js).
@@ -44,11 +46,27 @@ const POA_TYPES = ['PROOF_OF_RESIDENCE', 'PROOF_OF_RESIDENCE2', 'UTILITY_BILL', 
 const BLOCKING_CODES = [33602, 33603, 33606];
 
 // fixed KYC values (MAX only checks they are filled in); change them in .env
+const LEVELS = ['high', 'medium', 'low'];
+const level = (name, fallback) => {
+  const v = String(process.env[name] || fallback).trim().toLowerCase();
+  if (!LEVELS.includes(v)) throw new Error(`${name} must be high, medium or low`);
+  return v;
+};
+const score = (name, fallback) => {
+  const v = Number(process.env[name] ?? fallback);
+  if (!Number.isFinite(v)) throw new Error(`${name} must be a number`);
+  return v;
+};
 const kycDefaults = () => ({
   approvers: String(process.env.CAT5_APPROVERS || 'Sumsub automated review').split(',').map((s) => s.trim()).filter(Boolean).slice(0, 20),
   risk_rating: process.env.CAT5_RISK_RATING || 'Low',
   member_classification: process.env.CAT5_MEMBER_CLASSIFICATION || 'Retail',
-  aml_screening_result: process.env.CAT5_AML_RESULT || 'Clear (Sumsub GREEN)'
+  aml_screening_result: process.env.CAT5_AML_RESULT || 'Clear (Sumsub GREEN)',
+  // the UAE suitability and risk tolerance assessment (MAX takes them as they are)
+  suitability_level: level('CAT5_SUITABILITY_LEVEL', 'medium'),
+  suitability_score: score('CAT5_SUITABILITY_SCORE', 0),
+  risk_tolerance_level: level('CAT5_RISK_TOLERANCE_LEVEL', 'medium'),
+  risk_tolerance_score: score('CAT5_RISK_TOLERANCE_SCORE', 0)
 });
 
 class Blocked extends Error {}
@@ -114,10 +132,15 @@ export async function buildRequest(app, applicant, password) {
   if (!front) throw new Blocked('Sumsub has no accepted identity document image for this client.');
   if (!idDoc?.number && !app.idNumberEncrypted) throw new Blocked('Sumsub has no document number for this client.');
 
-  // proof of address is optional for MAX: without it, proof_ddress and zipcode are sent as "" (the address itself is
-  // still required: Sumsub's, else the one from our form, else the country of residence)
+  // the residential address step of our form (house / flat, building, street, city): required by MAX; proof of address
+  // files and the postal code are optional and left out when there are none
+  const home = { house_flat_number: cut(app.flatNumber, 200), house_building_name: cut(app.buildingName, 200), street_address: cut(app.streetAddress, 300), city_emirate: cut(app.city, 200) };
+  if (Object.values(home).some((v) => !v)) throw new Blocked('The application has no residential address (house / flat, building, street, city): it was submitted before that step existed.');
   const poaFiles = files.filter((f) => POA_TYPES.includes(f.idDocDef?.idDocType)).slice(0, 15);
   const address = (info.addresses ?? applicant.fixedInfo?.addresses ?? [])[0] ?? {};
+  // the client's IP when they applied; must be a real public address (in development: CAT5_DEV_REGISTER_IP)
+  const registerIp = publicIp(app.registerIp) ?? (process.env.NODE_ENV !== 'production' ? publicIp(process.env.CAT5_DEV_REGISTER_IP) : null);
+  if (!registerIp) throw new Blocked(`No public registration IP for this client (recorded: ${app.registerIp || 'none'}).`);
 
   const birthday = info.dob || app.dateOfBirth;
   const agreements = Array.isArray(app.agreements) ? app.agreements : JSON.parse(app.agreements ?? '[]');
@@ -143,14 +166,9 @@ export async function buildRequest(app, applicant, password) {
   }
 
   const tin = answers.pick('tin') || (app.tinEncrypted ? decryptField(app.tinEncrypted) : '') || `Not available (${answers.pick('noTinReason') || 'not provided'})`;
-  const street =
-    address.formattedAddress ||
-    [address.flatNumber, address.buildingNumber, address.street, address.subStreet, address.town, address.state].filter(Boolean).join(', ') ||
-    [app.flatNumber, app.buildingName, app.streetAddress, app.city].filter(Boolean).join(', ') ||
-    app.address ||
-    countryByCode(app.country)?.name ||
-    '';
-  if (!street) throw new Blocked('No residential address for this client (Sumsub has none and the application has no country).');
+  // the full residential address: the one the client gave, with their country of residence
+  const street = [app.flatNumber, app.buildingName, app.streetAddress, app.city, countryByCode(app.country)?.name].filter(Boolean).join(', ');
+  const zipcode = cut(address.postCode || app.postalCode || '', 32);
   const dial = countryByCode(app.phoneCountry || app.country)?.dial;
   // the MAX agent / IB every account is opened under (required; MAX refuses an unknown one); differs per MAX environment
   const invitationCode = cut(process.env.CAT5_INVITATION_CODE, 64);
@@ -165,6 +183,8 @@ export async function buildRequest(app, applicant, password) {
     last_name: cut(info.lastNameEn || app.lastName, 49),
     phone: String(app.phone).replace(/\D/g, '').replace(/^0+/, ''),
     d_code: dial ? `+${dial}` : '',
+    register_ip: registerIp,
+    province: cut(app.city, 255),
     kyc: {
       identity: cut(idDoc?.number || (app.idNumberEncrypted ? decryptField(app.idNumberEncrypted) : ''), 50),
       id_type: ID_TYPES[idDoc?.idDocType ?? front.idDocDef.idDocType],
@@ -184,7 +204,7 @@ export async function buildRequest(app, applicant, password) {
       forms: {
         base: {},
         identity: { front_img: frontUrl, back_img: backUrl },
-        address: { proof_ddress: poaUrls.length ? poaUrls : '', zipcode: cut(address.postCode || app.postalCode || '', 32) },
+        address: { ...home, ...(poaUrls.length ? { proof_ddress: poaUrls } : {}), ...(zipcode ? { zipcode } : {}) },
         contract: { agreement: agreementUrls[0], agreement2: agreementUrls[1] }
       }
     }

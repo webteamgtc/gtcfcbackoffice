@@ -183,6 +183,7 @@ export default async function ApplicationPage({ params }) {
             <Field label="Email verified">{app.emailVerifiedAt ? dateTime(app.emailVerifiedAt) : 'Not verified'}</Field>
             <Field label="Mobile (WhatsApp)">{phoneLabel(app.phone, app.phoneCountry || app.country)}</Field>
             <Field label="Mobile verified">{app.phoneVerifiedAt ? dateTime(app.phoneVerifiedAt) : 'Not verified'}</Field>
+            <Field label="IP address when applying">{text(app.registerIp)}</Field>
           </Section>
 
           <Section title="Residential address">
