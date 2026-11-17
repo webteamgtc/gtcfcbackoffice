@@ -13,6 +13,7 @@ import { signedAgreementPdf, storedAgreement } from '@/lib/signedAgreement';
 import { Cat5Error, cat5Configured, onboardCustomer, uploadFile } from '@/lib/cat5';
 import { demoApplicant, demoApplicantFiles, demoMode, downloadDemoFile, simulatedMax } from '@/lib/demo';
 
+
 /**
  * Opens the client's account in MAX once Sumsub has approved them (called from /success, src/app/actions/account.js).
  * Data: our application (client_applications) + the approved Sumsub applicant (ID document, proof of address, address,
