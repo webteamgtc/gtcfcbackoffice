@@ -14,28 +14,22 @@ import { getObject, putObject, storageConfigured } from '@/lib/storage';
  * submitted (actions/application.js), kept in OSS (OSS_PREFIX<application id>/agreements/…) and sent to MAX
  * (src/lib/accountOpening.js). An agreement without a PDF only gets the signature record.
  *
- * Where to write, per agreement PDF (PDF points, origin bottom left; measured on the file): the English and the Arabic
- * column of the signature box. Replacing the PDF with a new layout means measuring these again.
+ * Where to sign, per agreement PDF (PDF points, origin bottom left; measured on the file): the PDF has no signature box
+ * of its own, so we draw one (name, signature, date) in the empty space under the last clause. Replacing the PDF means
+ * measuring that space again (the box must not overlap the text or the page footer).
  */
 // (files are read with literal paths, so the build includes exactly these in the server bundle)
 const LAYOUTS = {
   '/client-agreement.pdf': {
     read: () => readFile(path.join(process.cwd(), 'public/client-agreement.pdf')),
-    page: 10,
-    fields: [
-      // English: "Name: ____", "Signature: ____", "Date (DD/MM/YYYY): ____"
-      { kind: 'name', x: 130, y: 413, width: 114 },
-      { kind: 'signature', x: 150, y: 387, width: 112 },
-      { kind: 'date', x: 205, y: 348, width: 82 },
-      // Arabic: الأسم / التوقيع / التاريخ (the lines run from x≈377 to x≈480)
-      { kind: 'name', x: 380, y: 409, width: 106 },
-      { kind: 'signature', x: 385, y: 376, width: 92 },
-      { kind: 'date', x: 382, y: 344, width: 96 }
-    ]
+    // page 18 (the last): the table ends at y≈158, the footer starts at y≈47; the table spans x 50–545
+    box: { page: 18, x: 50, y: 60, width: 495, height: 90 }
   }
 };
 
 const INK = rgb(0.043, 0.078, 0.251);
+const NAVY = rgb(0.106, 0.165, 0.31); // the table headings of the agreement
+const RULE = rgb(0.55, 0.58, 0.65);
 // the on-screen signature font (src/app/apply, @fontsource/great-vibes); Latin letters only
 const scriptFont = () => readFile(path.join(process.cwd(), 'node_modules/@fontsource/great-vibes/files/great-vibes-latin-400-normal.woff'));
 
@@ -68,23 +62,46 @@ export async function signedAgreementPdf({ title, url, name, email, reference, a
   pdf.registerFontkit(fontkit);
   const plain = await pdf.embedFont(StandardFonts.Helvetica);
   const script = await pdf.embedFont(await scriptFont(), { subset: true }); // subset: written as TrueType (viewers can't read WOFF)
-  const page = pdf.getPage(layout.page - 1);
+  const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+  const { box } = layout;
+  const page = pdf.getPage(Math.min(box.page, pdf.getPageCount()) - 1);
   const signedAt = new Date(acceptedAt);
   const fullName = titleCase(name);
 
-  for (const f of layout.fields) {
-    if (f.kind === 'date') {
+  // the box: a heading bar like the agreement's tables, then three columns (name | signature | date)
+  const head = 16;
+  page.drawRectangle({ x: box.x, y: box.y, width: box.width, height: box.height, borderColor: NAVY, borderWidth: 0.75 });
+  page.drawRectangle({ x: box.x, y: box.y + box.height - head, width: box.width, height: head, color: NAVY });
+  page.drawText('CLIENT SIGNATURE', { x: box.x + 8, y: box.y + box.height - head + 5, size: 8.5, font: bold, color: rgb(1, 1, 1) });
+
+  const pad = 10;
+  const colW = box.width / 3;
+  const lineY = box.y + 16;
+  const labelY = box.y + box.height - head - 13;
+  const cols = [
+    { label: 'Name', kind: 'name' },
+    { label: 'Signature', kind: 'signature' },
+    { label: 'Date (DD/MM/YYYY)', kind: 'date' }
+  ];
+  cols.forEach((c, i) => {
+    const x = box.x + i * colW + pad;
+    const width = colW - 2 * pad;
+    if (i) page.drawLine({ start: { x: box.x + i * colW, y: box.y }, end: { x: box.x + i * colW, y: box.y + box.height - head }, thickness: 0.5, color: RULE });
+    page.drawText(c.label, { x, y: labelY, size: 8, font: bold, color: NAVY });
+    page.drawLine({ start: { x, y: lineY }, end: { x: x + width, y: lineY }, thickness: 0.5, color: RULE });
+
+    if (c.kind === 'date') {
       const date = dubaiDate(signedAt);
-      page.drawText(date, { x: f.x, y: f.y, size: fit(plain, date, 11, f.width), font: plain, color: INK });
-      continue;
+      page.drawText(date, { x, y: lineY + 5, size: fit(plain, date, 11, width), font: plain, color: INK });
+      return;
     }
     // the name in the script font as the signature, in Helvetica as the name; a name neither can write (e.g. Arabic
     // script: no shaping here) is left to the signature record on the last page
-    const font = f.kind === 'signature' && canWrite(script, fullName) ? script : plain;
-    if (!canWrite(font, fullName)) continue;
-    const size = fit(font, fullName, f.kind === 'signature' ? 20 : 11, f.width);
-    page.drawText(fullName, { x: f.x, y: f.y, size, font, color: INK });
-  }
+    const font = c.kind === 'signature' && canWrite(script, fullName) ? script : plain;
+    if (!canWrite(font, fullName)) return;
+    const size = fit(font, fullName, c.kind === 'signature' ? 22 : 11, width);
+    page.drawText(fullName, { x, y: lineY + 5, size, font, color: INK });
+  });
 
   // the record of how and when it was signed (reference, e-mail, time, declaration) as the last page
   const record = await PDFDocument.load(await agreementPdf({ title, name: fullName, email, reference, acceptedAt, declaration }));
