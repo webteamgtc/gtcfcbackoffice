@@ -5,7 +5,7 @@ import '@/app/apply/apply.css';
 export const metadata = { title: `Verification unsuccessful | ${BRAND.name}` };
 
 /**
- * Sumsub rejected the client (redirected here by SumsubVerification): for good ('rejected') or asking for new documents
+ * Shufti Pro declined the client (redirected here by ShuftiVerification): for good ('rejected') or asking for new documents
  * ('resubmit'); `user.verificationStatus` tells the two apart. Add the follow-up for rejected clients here.
  */
 export default async function FailedPage() {

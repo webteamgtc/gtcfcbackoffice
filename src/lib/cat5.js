@@ -37,7 +37,9 @@ async function post(path, email, { body, headers = {} }) {
   try {
     res = await fetch(url, { method: 'POST', headers: { Accept: 'application/json', ...headers, ...signedHeaders(email) }, body, cache: 'no-store', signal: AbortSignal.timeout(60_000) });
   } catch (err) {
-    throw new Cat5Error(`MAX ${path}: ${err.message}`);
+    // fetch's "fetch failed" hides the reason (DNS, refused, TLS, timeout) in err.cause
+    const cause = err.cause?.code === 'ENOTFOUND' ? `the address ${err.cause.hostname} does not exist (DNS)` : err.cause?.code || err.cause?.message;
+    throw new Cat5Error(`MAX ${path}: ${err.message}${cause ? ` (${cause})` : ''}`);
   }
   const json = await res.json().catch(() => null);
   if (!json || typeof json.code !== 'number') {

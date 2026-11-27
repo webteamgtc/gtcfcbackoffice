@@ -5,54 +5,35 @@ import countries from 'i18n-iso-countries';
 import { decryptField } from '@/lib/fieldCrypto';
 
 /**
- * Demo mode (CAT5_DEMO_MODE=true in .env) for testing the account opening without Sumsub:
- *   · every applicant counts as verified (src/lib/user.js), the Sumsub WebSDK is skipped (src/app/actions/verification.js)
- *     and the client goes straight to /success;
- *   · the account opening (src/lib/accountOpening.js) uses a made-up approved Sumsub applicant built from the
- *     application, with generated placeholder images for the ID card and proof of address;
+ * Demo mode (CAT5_DEMO_MODE=true in .env) for testing the account opening without Shufti Pro:
+ *   · every applicant counts as verified (src/lib/user.js), the Shufti verification is skipped
+ *     (src/app/actions/verification.js) and the client goes straight to /success;
+ *   · the account opening (src/lib/accountOpening.js) uses a made-up accepted verification built from the application,
+ *     with generated placeholder images for the ID card and proof of address;
  *   · MAX: the real API when CAT5_API_BASE_URL / CAT5_SIGN_KEY are set, otherwise its answers are simulated here and the
  *     request is printed in the server console. The password e-mail is sent for real.
  * Never turn it on in production: nobody's identity is checked.
  */
 export const demoMode = () => process.env.CAT5_DEMO_MODE === 'true';
 
-/** An approved Sumsub applicant (same shape as GET /resources/applicants/…/one) made from our application row. */
-export function demoApplicant(app) {
-  const answer = (value) => ({ value });
+const COLOURS = { front: [41, 59, 147], back: [182, 135, 86], poa: [21, 122, 82] };
+const image = (colour) => async () => ({ buffer: placeholderPng(colour), contentType: 'image/png' });
+
+/** An accepted verification (the shape of kycRecord in src/lib/accountOpening.js) made from our application row. */
+export function demoKycRecord(app) {
   return {
-    id: 'demo',
-    inspectionId: 'demo',
-    externalUserId: String(app.id),
-    info: {
-      firstNameEn: app.firstName,
-      lastNameEn: app.lastName,
-      dob: app.dateOfBirth,
-      nationality: countries.alpha2ToAlpha3(app.nationality) ?? undefined,
-      idDocs: [{ idDocType: 'ID_CARD', number: app.idNumberEncrypted ? decryptField(app.idNumberEncrypted) : 'DEMO-ID-0001' }],
-      addresses: [{ country: countries.alpha2ToAlpha3(app.country) ?? 'ARE', postCode: '00000', street: 'Demo Street 1', town: 'Dubai' }]
+    approved: true,
+    document: {
+      number: app.idNumberEncrypted ? decryptField(app.idNumberEncrypted) : 'DEMO-ID-0001',
+      type: 'id_card',
+      firstName: app.firstName,
+      lastName: app.lastName,
+      dob: String(app.dateOfBirth ?? '').slice(0, 10),
+      nationality: countries.alpha2ToAlpha3(app.nationality) ?? undefined
     },
-    questionnaires: [
-      {
-        id: 'DEMO',
-        sections: {
-          personalInformation: { items: { jobTiltleProfession: answer('Software Engineer'), title: answer('Manager'), businessActivity: answer('Technology') } },
-          taxes: { items: { tin: answer('DEMO-TIN-0001') } },
-          politicallyExposedPe: { items: { iDeclareThatIAmAPoli: answer('no'), iDeclareThatIAmClose: answer('no') } }
-        }
-      }
-    ],
-    review: { reviewStatus: 'completed', reviewResult: { reviewAnswer: 'GREEN' } }
+    files: { front: image(COLOURS.front), back: image(COLOURS.back), poa: [image(COLOURS.poa)] }
   };
 }
-
-const DEMO_FILES = [
-  { id: 'demo-id-front', idDocDef: { idDocType: 'ID_CARD', idDocSubType: 'FRONT_SIDE' }, colour: [41, 59, 147] },
-  { id: 'demo-id-back', idDocDef: { idDocType: 'ID_CARD', idDocSubType: 'BACK_SIDE' }, colour: [182, 135, 86] },
-  { id: 'demo-poa', idDocDef: { idDocType: 'UTILITY_BILL' }, colour: [21, 122, 82] }
-];
-
-/** The demo applicant's uploads (same shape as Sumsub's file list). */
-export const demoApplicantFiles = async () => DEMO_FILES.map(({ colour, ...f }) => f);
 
 // a 640×400 PNG: a coloured band on white, so each placeholder is a real, different image
 function placeholderPng([r, g, b]) {
@@ -79,12 +60,6 @@ function placeholderPng([r, g, b]) {
   header.writeUInt32BE(height, 4);
   header.set([8, 2, 0, 0, 0], 8); // 8-bit RGB
   return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', header), chunk('IDAT', deflateSync(rows)), chunk('IEND', Buffer.alloc(0))]);
-}
-
-/** One of the demo uploads → { buffer, contentType } */
-export async function downloadDemoFile(_inspectionId, id) {
-  const file = DEMO_FILES.find((f) => f.id === id);
-  return { buffer: placeholderPng(file.colour), contentType: 'image/png' };
 }
 
 /** MAX's answers, for demo mode without CAT5_API_BASE_URL: nothing is sent anywhere. */

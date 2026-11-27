@@ -3,7 +3,7 @@ import { notFound } from 'next/navigation';
 import { requireAdmin } from '@/lib/admin';
 import { ADMIN_HOME } from '@/lib/adminRoutes';
 import { getApplication, VERIFICATION } from '@/lib/adminData';
-import { refreshFromSumsub } from '@/lib/verification';
+import { refreshVerification } from '@/lib/verification';
 import { demoMode } from '@/lib/demo';
 import AdminShell, { StatusPill } from '../../AdminShell';
 import CopyButton from '../../CopyButton';
@@ -56,8 +56,8 @@ export default async function ApplicationPage({ params }) {
 
   let record;
   try {
-    // the current Sumsub decision first (a manual change in the Sumsub dashboard may not have reached us by webhook)
-    if (/^\d+$/.test(String(id))) await refreshFromSumsub(id);
+    // the current Shufti Pro decision first (a change in the Shufti back office may not have reached us by callback)
+    if (/^\d+$/.test(String(id))) await refreshVerification(id);
     record = await getApplication(id);
   } catch (err) {
     console.error('[admin] application:', err.message);
@@ -283,21 +283,21 @@ export default async function ApplicationPage({ params }) {
           <section className="ad-card ad-section">
             <header>
               <h2>Identity verification</h2>
-              <p className="ad-muted">Result from Sumsub.</p>
+              <p className="ad-muted">Result from {verification?.provider === 'shufti' ? 'Shufti Pro' : verification ? 'Sumsub (before Shufti Pro)' : 'Shufti Pro'}.</p>
             </header>
             {verification ? (
               <dl className="ad-grid ad-grid-one">
                 <Field label="Status">
                   <StatusPill tone={status.tone}>{status.label}</StatusPill>
                 </Field>
-                <Field label="Review">{text(verification.review_status)}</Field>
+                <Field label={verification.provider === 'shufti' ? 'Last event' : 'Review'}>{text(verification.review_status)}</Field>
                 <Field label="Answer">{text(verification.review_answer)}</Field>
                 {verification.reject_type && <Field label="Rejection type">{text(verification.reject_type)}</Field>}
                 {verification.reject_labels.length > 0 && <Field label="Reasons">{verification.reject_labels.join(', ')}</Field>}
                 {verification.moderation_comment && <Field label="Reviewer comment" wide>{verification.moderation_comment}</Field>}
                 {verification.client_comment && <Field label="Message to client" wide>{verification.client_comment}</Field>}
-                <Field label="Level">{text(verification.level_name)}</Field>
-                <Field label="Applicant ID">
+                <Field label={verification.provider === 'shufti' ? 'Checks' : 'Level'}>{text(verification.level_name)}</Field>
+                <Field label={verification.provider === 'shufti' ? 'Shufti reference' : 'Applicant ID'}>
                   <code>{text(verification.applicant_id)}</code>
                 </Field>
                 <Field label="Last update">{dateTime(verification.updated_at ?? verification.last_event_at)}</Field>

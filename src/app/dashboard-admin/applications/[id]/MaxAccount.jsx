@@ -7,7 +7,7 @@ import { openMaxAccount } from '@/app/dashboard-admin/actions';
 /**
  * The client's MAX account (max_onboarding, src/lib/accountOpening.js): its status, member ID and the last error, and a
  * button that opens it (or tries again after a failure). Opening also e-mails the client their login details.
- * `max`: the max_onboarding row or null; `approved`: Sumsub approved the client.
+ * `max`: the max_onboarding row or null; `approved`: Shufti Pro accepted the client's verification.
  */
 const STATES = {
   none: { tone: 'neutral', label: 'Not opened' },
@@ -92,7 +92,7 @@ export default function MaxAccount({ applicationId, max, approved, emailedAt, up
             </button>
           )
         ) : (
-          <small className="ad-muted">Available once the client is approved in Sumsub.</small>
+          <small className="ad-muted">Available once the client is verified by Shufti Pro.</small>
         )}
         {error && <small className="ad-error-text"> {error}</small>}
       </div>

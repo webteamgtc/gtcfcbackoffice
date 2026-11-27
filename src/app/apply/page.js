@@ -3,7 +3,7 @@ import { connection } from 'next/server';
 import Logo from '@/app/components/Logo';
 import LiveApplicationForm from '@/app/components/LiveApplicationForm';
 import { FileIcon, LockIcon, ShieldIcon, UserIcon } from '@/app/components/icons';
-import SumsubVerification from '@/app/components/SumsubVerification';
+import ShuftiVerification from '@/app/components/ShuftiVerification';
 import { logout } from '@/app/actions/auth';
 import { BRAND } from '@/lib/brand';
 import { getCurrentUser } from '@/lib/user';
@@ -22,7 +22,7 @@ export const metadata = { title: `Apply | ${BRAND.name}` };
 const HOW = [
   { Icon: UserIcon, title: 'Personal information', text: 'Your name, date of birth, country and nationality.' },
   { Icon: FileIcon, title: 'Client agreement', text: 'Read and sign electronically (companies add their details and license).' },
-  { Icon: ShieldIcon, title: 'Verify your identity', text: 'Your ID, proof of address, a short questionnaire and a selfie with Sumsub. We then review your application.' }
+  { Icon: ShieldIcon, title: 'Verify your identity', text: 'Your ID, proof of address, and a selfie with Shufti Pro. We then review your application.' }
 ];
 
 async function currentApplicant() {
@@ -38,7 +38,7 @@ async function currentApplicant() {
 export default async function ApplyPage() {
   const user = await currentApplicant();
   if (!user) return <LiveApplicationForm />;
-  // Sumsub has decided: straight to the outcome page (pending stays here and waits for the decision)
+  // Shufti Pro has decided: straight to the outcome page (pending stays here and waits for the decision)
   if (user.verificationStatus === 'approved') redirect('/success');
   if (['rejected', 'resubmit'].includes(user.verificationStatus)) redirect('/failed');
 
@@ -79,7 +79,7 @@ export default async function ApplyPage() {
             </h2>
             <p>Your application has been received. Complete your identity verification below.</p>
           </div>
-          <SumsubVerification status={user.verificationStatus} />
+          <ShuftiVerification status={user.verificationStatus} />
           <form action={logout} className="verify-switch">
             Not you?{' '}
             <button type="submit" className="link-btn">

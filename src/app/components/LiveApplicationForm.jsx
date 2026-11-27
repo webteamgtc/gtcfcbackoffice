@@ -5,7 +5,7 @@
  * with exactly the fields of the document:
  *   1. Personal Information: surname, given name, date of birth, country of residence, nationality.
  *   Contact details (after 1): email and mobile, verified with a 6-digit WhatsApp code (Infobip, POST /api/send-phone-otp)
- *   (the ID number comes from Sumsub's document check). The send route returns a signed token (no database) that goes back with the code; Continue checks
+ *   (the ID number comes from Shufti Pro's document check). The send route returns a signed token (no database) that goes back with the code; Continue checks
  *   it on the server (checkContact), submit uses it up, so only a verified mobile is saved. When the e-mail already has
  *   an application, checkContact says so (`existing`) and the client also confirms the e-mail with a code (POST
  *   /api/otp-smtp); they then continue, and submit updates that application instead of creating a new one.
@@ -15,7 +15,7 @@
  *   client on submit.
  *   4. Questionnaire, shown in three short parts (work & education · income & funds · experience & declarations).
  *   5. Client Agreement: the two agreements to sign. Submit saves everything (src/app/actions/application.js),
- *      and shows the success panel with the Sumsub verification (SumsubVerification.jsx), as before.
+ *      and shows the success panel with the Shufti Pro verification (ShuftiVerification.jsx), as before.
  * Fields, options and rules live in src/lib/application.js. Nothing is saved until the last step.
  * Partner code is read from the URL (?code, ?ref, ?partner_id, ?partner_code, ?ib); ?code / ?ref lock it.
  *
@@ -35,7 +35,7 @@ import {
 import { COUNTRIES, DEFAULT_COUNTRY, SELECTABLE_COUNTRIES, countryByCode } from '@/lib/countries';
 import { DOC_LABELS } from '@/lib/kyc';
 import { BRAND } from '@/lib/brand';
-import SumsubVerification from './SumsubVerification';
+import ShuftiVerification from './ShuftiVerification';
 
 // the 3D globe behind the journey panel loads after the form (three.js stays out of the first load)
 const JourneyGlobe = dynamic(() => import('./JourneyGlobe'), { ssr: false });
@@ -1235,7 +1235,7 @@ export default function LiveApplicationForm() {
           Reference <strong>{done.reference}</strong>
         </p>
       </div>
-      <SumsubVerification />
+      <ShuftiVerification />
     </div>
   );
 
@@ -1322,7 +1322,7 @@ export default function LiveApplicationForm() {
                   </span>
                   <span className="ap-journey-text">
                     <strong>Verify your identity</strong>
-                    <small>Your ID, proof of address, a short questionnaire and a selfie, with Sumsub after you submit.</small>
+                    <small>Your ID, proof of address and a selfie, with Shufti Pro after you submit.</small>
                   </span>
                 </motion.li>
               </AnimatePresence>

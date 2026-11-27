@@ -9,7 +9,7 @@ import '@/app/apply/apply.css';
 export const metadata = { title: `Verified | ${BRAND.name}` };
 
 /**
- * Sumsub approved the client (redirected here by SumsubVerification). The account is then opened in MAX
+ * Shufti Pro accepted the client (redirected here by ShuftiVerification). The account is then opened in MAX
  * (AccountOpening → src/lib/accountOpening.js), which e-mails the client their login details.
  */
 export default async function SuccessPage() {

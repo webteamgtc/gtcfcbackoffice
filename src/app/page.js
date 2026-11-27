@@ -2,7 +2,7 @@ import { redirect } from 'next/navigation';
 import { getCurrentUser, getUserDocuments, profileCompletion } from '@/lib/user';
 import { accountStatus } from '@/lib/accountOpening';
 import { journey } from '@/lib/kyc';
-import { refreshFromSumsub } from '@/lib/verification';
+import { refreshVerification } from '@/lib/verification';
 import { ArrowRightIcon } from '@/app/components/icons';
 import { Activity, Details, DetailsCardTitle, DocTile, HelpCard, ProfileCard, Shell } from '@/app/components/dashboard/parts';
 
@@ -10,7 +10,7 @@ import { Activity, Details, DetailsCardTitle, DocTile, HelpCard, ProfileCard, Sh
  * Client page: where the client's application stands. Navy hero with what to do next and the client's credential card
  * (name, verification status, progress), the two documents, their MAX account, recent activity, details and help.
  * Reached after the e-mail code sign-in (src/app/login) or once signed in by the application (src/proxy.js).
- * The verification itself happens on /apply (Sumsub); its outcome on /success and /failed.
+ * The verification itself happens on /apply (Shufti Pro); its outcome on /success and /failed.
  */
 const ACCOUNT = {
   done: { tone: 'ok', title: 'Your account is open', text: (u) => `We emailed your login details to ${u.email}.` },
@@ -23,9 +23,9 @@ const ACCOUNT = {
 export default async function Home() {
   const user = await getCurrentUser();
   if (!user) redirect('/login');
-  // a decision changed in the Sumsub dashboard since (e.g. approved after a rejection)
+  // a decision changed in the Shufti back office since (e.g. approved after a rejection)
   if (user.verificationStatus && user.verificationStatus !== 'approved') {
-    const now = await refreshFromSumsub(user.id);
+    const now = await refreshVerification(user.id);
     if (now && now !== 'not_started') user.verificationStatus = now;
   }
 

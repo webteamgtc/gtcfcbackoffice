@@ -7,41 +7,32 @@ import { countryByCode } from '@/lib/countries';
 import { publicIp } from '@/lib/clientIp';
 import { BRAND } from '@/lib/brand';
 import { accountOpenedEmail, sendMail } from '@/lib/mailer';
-import { downloadApplicantFile, getApplicantByUserId, getApplicantFiles } from '@/lib/sumsub';
+import { downloadProof, getStatus } from '@/lib/shufti';
 import { agreementPdf } from '@/lib/agreementPdf';
 import { signedAgreementPdf, storedAgreement } from '@/lib/signedAgreement';
 import { Cat5Error, cat5Configured, onboardCustomer, uploadFile } from '@/lib/cat5';
-import { demoApplicant, demoApplicantFiles, demoMode, downloadDemoFile, simulatedMax } from '@/lib/demo';
+import { demoKycRecord, demoMode, simulatedMax } from '@/lib/demo';
 
 
 /**
- * Opens the client's account in MAX once Sumsub has approved them (called from /success, src/app/actions/account.js).
- * Data: our application (client_applications) + the approved Sumsub applicant (ID document, proof of address, address,
- * questionnaire). Files are copied from Sumsub to MAX; the two agreements are sent as the client's signed copies
- * (src/lib/signedAgreement.js).
+ * Opens the client's account in MAX once Shufti Pro has accepted their verification (called from /success,
+ * src/app/actions/account.js, and the back office). Data: our application (client_applications) + the accepted Shufti
+ * request (document data read by OCR, the document and proof of address images). Images are copied from Shufti to MAX;
+ * the two agreements are sent as the client's signed copies (src/lib/signedAgreement.js).
  * The password is generated here, sent to MAX and e-mailed to the client. Until that e-mail has gone out it is kept
  * encrypted in max_onboarding, so a retry sends MAX (and the client) the same one; then it is erased.
  *
  * max_onboarding.status: new → processing → done | failed (retried on the next visit, up to MAX_ATTEMPTS) | blocked
  * (our team has to look: duplicate e-mail/phone, data MAX refused, missing ID document, corporate client).
  * MAX's external_customer_id is our application reference, so retries are idempotent on their side too.
- * Demo mode (CAT5_DEMO_MODE, src/lib/demo.js) swaps Sumsub for a made-up approved applicant, and MAX for simulated
+ * Demo mode (CAT5_DEMO_MODE, src/lib/demo.js) swaps Shufti for a made-up accepted verification, and MAX for simulated
  * answers when CAT5_API_BASE_URL isn't set.
  */
 const MAX_ATTEMPTS = 5;
 const STALE_MINUTES = 10; // a "processing" row older than this was interrupted and may be taken again
 
-// Sumsub questionnaire (KYB_2) answers MAX needs; the first key found in any section wins
-const QUESTIONS = {
-  occupation: ['jobTiltleProfession', 'jobTitleProfession', 'occupation', 'profession'],
-  title: ['title', 'jobTitle', 'position'],
-  industry: ['businessActivity', 'industry'],
-  tin: ['tin', 'tinNumber', 'taxIdentificationNumber', 'taxIdNumber', 'taxNumber'],
-  noTinReason: ['pleaseExplain'],
-  pep: ['iDeclareThatIAmAPoli', 'iDeclareThatIAmClose']
-};
-const ID_TYPES = { ID_CARD: 'id_card', DRIVERS: 'driver_license', RESIDENCE_PERMIT: 'residence_permit', PASSPORT: 'passport' };
-const POA_TYPES = ['PROOF_OF_RESIDENCE', 'PROOF_OF_RESIDENCE2', 'UTILITY_BILL', 'UTILITY_BILL2', 'BANK_STATEMENT', 'BANK_STATEMENT2'];
+// Shufti's document types → MAX's id_type
+const ID_TYPES = { id_card: 'id_card', passport: 'passport', driving_license: 'driver_license' };
 // codes after which a retry cannot help: our team has to check the client
 const BLOCKING_CODES = [33602, 33603, 33606];
 
@@ -58,10 +49,10 @@ const score = (name, fallback) => {
   return v;
 };
 const kycDefaults = () => ({
-  approvers: String(process.env.CAT5_APPROVERS || 'Sumsub automated review').split(',').map((s) => s.trim()).filter(Boolean).slice(0, 20),
+  approvers: String(process.env.CAT5_APPROVERS || 'Shufti Pro automated review').split(',').map((s) => s.trim()).filter(Boolean).slice(0, 20),
   risk_rating: process.env.CAT5_RISK_RATING || 'Low',
   member_classification: process.env.CAT5_MEMBER_CLASSIFICATION || 'Retail',
-  aml_screening_result: process.env.CAT5_AML_RESULT || 'Clear (Sumsub GREEN)',
+  aml_screening_result: process.env.CAT5_AML_RESULT || 'Clear (Shufti Pro verification accepted)',
   // the UAE suitability and risk tolerance assessment (MAX takes them as they are)
   suitability_level: level('CAT5_SUITABILITY_LEVEL', 'medium'),
   suitability_score: score('CAT5_SUITABILITY_SCORE', 0),
@@ -94,65 +85,100 @@ function generatePassword() {
   return chars.join('');
 }
 
-function questionnaire(applicant) {
-  const flat = {};
-  for (const q of applicant.questionnaires ?? [])
-    for (const section of Object.values(q.sections ?? {}))
-      for (const [key, item] of Object.entries(section.items ?? {})) flat[key] = item.value ?? (item.values ?? []).join(', ');
-  const pick = (name) => QUESTIONS[name].map((k) => flat[k]).find((v) => v != null && String(v).trim() !== '');
-  return { pick, yes: (name) => QUESTIONS[name].some((k) => String(flat[k] ?? '').toLowerCase() === 'yes') };
+// a Shufti value that may be a string, a list or missing → its first non-empty string
+const first = (v) => (Array.isArray(v) ? v.map(first).find(Boolean) : typeof v === 'string' && v.trim() ? v.trim() : undefined);
+const all = (v) => (Array.isArray(v) ? v.flatMap(all) : typeof v === 'string' && v.trim() ? [v.trim()] : []);
+
+// a nationality / country as Shufti gives it (alpha-2, alpha-3 or an English name) → ISO alpha-3
+function toAlpha3(v) {
+  const s = String(v ?? '').trim();
+  if (/^[a-z]{2}$/i.test(s)) return countries.alpha2ToAlpha3(s.toUpperCase());
+  if (/^[a-z]{3}$/i.test(s)) return countries.isValid(s.toUpperCase()) ? s.toUpperCase() : undefined;
+  return s ? countries.getAlpha3Code(s, 'en') : undefined;
 }
 
-// files the review accepted (rejected or replaced uploads are left out)
-const usable = (f) => !f.deactivated && f.reviewResult?.reviewAnswer !== 'RED';
+/**
+ * The accepted verification of an application, in the shape buildRequest needs:
+ * { approved, document: { number, type, firstName, lastName, dob, nationality }, files: { front, back, poa: [] } }
+ * where each file is a function → { buffer, contentType }. From Shufti's status endpoint (verification_data = what OCR
+ * read, proofs = links to the images), or made up in demo mode.
+ */
+export async function kycRecord(app) {
+  if (demoMode()) return demoKycRecord(app);
+  const v = await queryOne("SELECT applicant_id FROM client_verifications WHERE application_id = ? AND provider = 'shufti'", [app.id]);
+  if (!v?.applicant_id) throw new Blocked('The client has no Shufti Pro verification.');
+  const answer = await getStatus(v.applicant_id);
+  const doc = answer.verification_data?.document ?? {};
+  const extra = answer.additional_data?.document?.proof ?? {};
+  const proofs = answer.proofs ?? {};
+  const load = (url) => url && (() => downloadProof(url, proofs.access_token));
+  return {
+    approved: answer.event === 'verification.accepted',
+    document: {
+      number: first(doc.document_number) ?? first(extra.document_number),
+      type: first(doc.selected_type) ?? first(doc.document_type),
+      firstName: first(doc.name?.first_name) ?? first(extra.first_name),
+      lastName: first(doc.name?.last_name) ?? first(extra.last_name),
+      dob: first(doc.dob) ?? first(extra.dob),
+      nationality: toAlpha3(first(doc.nationality) ?? first(extra.nationality))
+    },
+    files: {
+      front: load(first(proofs.document?.proof)),
+      back: load(first(proofs.document?.additional_proof)),
+      poa: [...all(proofs.address?.proof), ...all(proofs.address?.additional_proof)].map(load)
+    }
+  };
+}
 
-// where the KYC data comes from and where it goes: Sumsub and MAX, or their demo stand-ins
-const sumsub = () =>
-  demoMode()
-    ? { applicant: (app) => demoApplicant(app), files: demoApplicantFiles, download: downloadDemoFile }
-    : { applicant: (app) => getApplicantByUserId(String(app.id)), files: getApplicantFiles, download: downloadApplicantFile };
 const max = () => (demoMode() && !cat5Configured() ? simulatedMax : { uploadFile, onboardCustomer });
 
-async function copyFromSumsub(applicant, file, email, name) {
-  const { buffer, contentType } = await sumsub().download(applicant.inspectionId, file.id);
-  return max().uploadFile(email, { buffer, contentType, name });
+// the real type of a file from its first bytes (a store may label images generically); MAX takes JPEG, PNG, GIF, BMP, PDF
+function sniff(buffer, contentType) {
+  const b = buffer.subarray(0, 12);
+  if (b[0] === 0xff && b[1] === 0xd8) return 'image/jpeg';
+  if (b.subarray(0, 4).toString('latin1') === '\x89PNG') return 'image/png';
+  if (b.subarray(0, 4).toString('latin1') === 'GIF8') return 'image/gif';
+  if (b.subarray(0, 2).toString('latin1') === 'BM') return 'image/bmp';
+  if (b.subarray(0, 4).toString('latin1') === '%PDF') return 'application/pdf';
+  if (b.subarray(8, 12).toString('latin1') === 'WEBP') return 'image/webp';
+  return contentType;
+}
+
+async function copyToMax(file, email, name) {
+  const { buffer, contentType } = await file();
+  return max().uploadFile(email, { buffer, contentType: sniff(buffer, contentType), name });
 }
 
 /** Everything MAX needs, uploads included → the onboarding request body. Exported for testing. */
-export async function buildRequest(app, applicant, password) {
+export async function buildRequest(app, record, password) {
   const email = app.email.trim().toLowerCase();
-  const info = applicant.info ?? {};
-  const answers = questionnaire(applicant);
-  const files = (await sumsub().files(applicant.id)).filter(usable);
-
-  const idDoc = (info.idDocs ?? []).find((d) => ID_TYPES[d.idDocType]);
-  const idFiles = files.filter((f) => ID_TYPES[f.idDocDef?.idDocType]);
-  const front = idFiles.find((f) => f.idDocDef.idDocSubType !== 'BACK_SIDE');
-  const back = idFiles.find((f) => f.idDocDef.idDocSubType === 'BACK_SIDE') ?? front; // a passport has one side
-  if (!front) throw new Blocked('Sumsub has no accepted identity document image for this client.');
-  if (!idDoc?.number && !app.idNumberEncrypted) throw new Blocked('Sumsub has no document number for this client.');
+  const doc = record.document ?? {};
+  const { front } = record.files;
+  const back = record.files.back ?? front; // a passport has one side
+  if (!front) throw new Blocked('Shufti Pro has no identity document image for this client.');
+  if (!doc.number && !app.idNumberEncrypted) throw new Blocked('Shufti Pro read no document number for this client.');
 
   // the residential address step of our form (house / flat, building, street, city): required by MAX; proof of address
   // files and the postal code are optional and left out when there are none
   const home = { house_flat_number: cut(app.flatNumber, 200), house_building_name: cut(app.buildingName, 200), street_address: cut(app.streetAddress, 300), city_emirate: cut(app.city, 200) };
   if (Object.values(home).some((v) => !v)) throw new Blocked('The application has no residential address (house / flat, building, street, city): it was submitted before that step existed.');
-  const poaFiles = files.filter((f) => POA_TYPES.includes(f.idDocDef?.idDocType)).slice(0, 15);
-  const address = (info.addresses ?? applicant.fixedInfo?.addresses ?? [])[0] ?? {};
+  const poaFiles = record.files.poa.filter(Boolean).slice(0, 15);
   // the client's IP when they applied; must be a real public address (in development: CAT5_DEV_REGISTER_IP)
   const registerIp = publicIp(app.registerIp) ?? (process.env.NODE_ENV !== 'production' ? publicIp(process.env.CAT5_DEV_REGISTER_IP) : null);
   if (!registerIp) throw new Blocked(`No public registration IP for this client (recorded: ${app.registerIp || 'none'}).`);
 
-  const birthday = info.dob || app.dateOfBirth;
+  // the date of birth read from the document, else the one the client gave (DATE columns come as YYYY-MM-DD)
+  const birthday = /^\d{4}-\d{2}-\d{2}$/.test(doc.dob ?? '') ? doc.dob : String(app.dateOfBirth).slice(0, 10);
   const agreements = Array.isArray(app.agreements) ? app.agreements : JSON.parse(app.agreements ?? '[]');
   const signed = BRAND.agreements.map((a, i) => agreements.find((x) => x.title === a.title) ?? agreements[i]);
   if (signed.length < 2 || signed.some((a) => !a?.accepted)) throw new Blocked('The client has not accepted both agreements.');
   const name = `${app.firstName} ${app.lastName}`;
 
   // uploads (one at a time, as MAX expects)
-  const frontUrl = await copyFromSumsub(applicant, front, email, 'id-front');
-  const backUrl = back === front ? frontUrl : await copyFromSumsub(applicant, back, email, 'id-back');
+  const frontUrl = await copyToMax(front, email, 'id-front');
+  const backUrl = back === front ? frontUrl : await copyToMax(back, email, 'id-back');
   const poaUrls = [];
-  for (const [i, f] of poaFiles.entries()) poaUrls.push(await copyFromSumsub(applicant, f, email, `proof-of-address-${i + 1}`));
+  for (const [i, f] of poaFiles.entries()) poaUrls.push(await copyToMax(f, email, `proof-of-address-${i + 1}`));
   const agreementUrls = [];
   for (const [i, a] of signed.entries()) {
     // the signed copy stored at submission (src/lib/signedAgreement.js), else one made now; without an agreement PDF,
@@ -165,10 +191,10 @@ export async function buildRequest(app, applicant, password) {
     agreementUrls.push(await max().uploadFile(email, { buffer: pdf, contentType: 'application/pdf', name: `agreement-${i + 1}` }));
   }
 
-  const tin = answers.pick('tin') || (app.tinEncrypted ? decryptField(app.tinEncrypted) : '') || `Not available (${answers.pick('noTinReason') || 'not provided'})`;
+  const tin = (app.tinEncrypted ? decryptField(app.tinEncrypted) : '') || 'Not available (not provided)';
   // the full residential address: the one the client gave, with their country of residence
   const street = [app.flatNumber, app.buildingName, app.streetAddress, app.city, countryByCode(app.country)?.name].filter(Boolean).join(', ');
-  const zipcode = cut(address.postCode || app.postalCode || '', 32);
+  const zipcode = cut(app.postalCode || '', 32);
   const dial = countryByCode(app.phoneCountry || app.country)?.dial;
   // the MAX agent / IB every account is opened under (required; MAX refuses an unknown one); differs per MAX environment
   const invitationCode = cut(process.env.CAT5_INVITATION_CODE, 64);
@@ -179,27 +205,27 @@ export async function buildRequest(app, applicant, password) {
     invitation_code: invitationCode,
     email,
     password,
-    first_name: cut(info.firstNameEn || app.firstName, 49),
-    last_name: cut(info.lastNameEn || app.lastName, 49),
+    first_name: cut(app.firstName || doc.firstName, 49),
+    last_name: cut(app.lastName || doc.lastName, 49),
     phone: String(app.phone).replace(/\D/g, '').replace(/^0+/, ''),
     d_code: dial ? `+${dial}` : '',
     register_ip: registerIp,
     province: cut(app.city, 255),
     kyc: {
-      identity: cut(idDoc?.number || (app.idNumberEncrypted ? decryptField(app.idNumberEncrypted) : ''), 50),
-      id_type: ID_TYPES[idDoc?.idDocType ?? front.idDocDef.idDocType],
-      country: address.country || alpha3(app.country),
-      nationality: info.nationality || alpha3(app.nationality),
+      identity: cut(doc.number || (app.idNumberEncrypted ? decryptField(app.idNumberEncrypted) : ''), 50),
+      id_type: ID_TYPES[doc.type] ?? 'id_card',
+      country: alpha3(app.country),
+      nationality: doc.nationality || alpha3(app.nationality),
       birthday,
       age: ageOn(birthday),
       address: cut(street, 255),
       tin: cut(tin, 100),
-      occupation: cut(answers.pick('occupation') || app.occupation || 'Not provided', 100),
-      title: cut(answers.pick('title') || 'Not provided', 100),
-      industry: cut(answers.pick('industry') || app.industry || 'Not provided', 100),
+      occupation: cut(app.occupationOther || app.occupation || 'Not provided', 100),
+      title: cut('Not provided', 100),
+      industry: cut(app.industryOther || app.industry || 'Not provided', 100),
       accept_terms: true,
-      // from Sumsub's PEP questions (our form's `pep` is the "I am NOT a PEP" declaration, so it can't say yes)
-      is_pep: answers.yes('pep'),
+      // our form's `pep` is the "I am NOT a PEP" declaration (and Shufti's AML check, when on, declines matches)
+      is_pep: false,
       ...kycDefaults(),
       forms: {
         base: {},
@@ -222,7 +248,7 @@ const save = (id, fields) =>
   query(`UPDATE max_onboarding SET ${Object.keys(fields).map((k) => `${k} = ?`).join(', ')} WHERE application_id = ?`, [...Object.values(fields), id]);
 
 /**
- * Opens the account if it isn't open yet. Only for an application Sumsub approved (the caller checks).
+ * Opens the account if it isn't open yet. Only for an application Shufti Pro accepted (the caller checks).
  * → { status: 'done' | 'processing' | 'failed' | 'blocked' }
  */
 export async function openAccount(applicationId) {
@@ -242,8 +268,8 @@ export async function openAccount(applicationId) {
   try {
     const app = await queryOne('SELECT * FROM client_applications WHERE id = ?', [applicationId]);
     if (app.accountType === 'corporate') throw new Blocked('Corporate clients are opened by our team (the MAX import is for individuals).');
-    const applicant = await sumsub().applicant(app);
-    if (applicant?.review?.reviewResult?.reviewAnswer !== 'GREEN') throw new Blocked('The Sumsub applicant is not approved.');
+    const record = await kycRecord(app);
+    if (!record.approved) throw new Blocked('The Shufti Pro verification is not accepted.');
 
     // the same password on every try until the client has it
     const job = await queryOne('SELECT password_encrypted FROM max_onboarding WHERE application_id = ?', [applicationId]);
@@ -253,7 +279,7 @@ export async function openAccount(applicationId) {
       await save(applicationId, { password_encrypted: encryptField(password) });
     }
 
-    const result = await max().onboardCustomer(await buildRequest(app, applicant, password));
+    const result = await max().onboardCustomer(await buildRequest(app, record, password));
     await save(applicationId, {
       member_id: result.member_id ?? null,
       result_code: result.code,

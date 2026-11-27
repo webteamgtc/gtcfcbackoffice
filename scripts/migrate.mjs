@@ -72,6 +72,16 @@ if (add.length) {
   console.log(`client_applications: ${add.map((a) => a.split(' ')[2]).join(', ')} added`);
 }
 
+// client_verifications: Shufti Pro (provider, its request reference in applicant_id, the verification link)
+const addVerification = [];
+if (!(await hasColumn('client_verifications', 'provider'))) addVerification.push("ADD COLUMN provider VARCHAR(20) NULL COMMENT 'shufti (NULL: Sumsub)' AFTER application_id");
+if (!(await hasColumn('client_verifications', 'verification_url'))) addVerification.push("ADD COLUMN verification_url VARCHAR(1000) NULL COMMENT 'Shufti: link of the current request' AFTER applicant_id");
+if (!(await hasColumn('client_verifications', 'url_created_at'))) addVerification.push('ADD COLUMN url_created_at DATETIME NULL AFTER verification_url');
+if (addVerification.length) {
+  await conn.query(`ALTER TABLE client_verifications ${addVerification.join(', ')}, MODIFY COLUMN applicant_id VARCHAR(250) NULL`);
+  console.log(`client_verifications: ${addVerification.map((a) => a.split(' ')[2]).join(', ')} added`);
+}
+
 const [tables] = await conn.query(
   "SELECT TABLE_NAME AS name, TABLE_ROWS AS approxRows FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN ('client_applications', 'application_files', 'client_verifications', 'email_otps', 'client_documents', 'max_onboarding')"
 );

@@ -4,7 +4,7 @@ import { getCurrentUser } from '@/lib/user';
 import { openAccount } from '@/lib/accountOpening';
 
 /**
- * Opens the signed-in client's MAX account (src/app/components/AccountOpening.jsx on /success). Only for a client Sumsub
+ * Opens the signed-in client's MAX account (src/app/components/AccountOpening.jsx on /success). Only for a client Shufti Pro
  * approved; safe to call repeatedly (the account is opened once, see src/lib/accountOpening.js).
  *   → { status: 'done' | 'processing' | 'failed' | 'blocked' } | { status: 'session' }
  */
